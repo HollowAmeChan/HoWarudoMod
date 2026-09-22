@@ -12,7 +12,7 @@ Mod，Warudo 就把整个场景加载进来替换当前环境。
 | 项 | 值 | 依据 |
 |---|---|---|
 | 入口资产 | `Environment.unity`，场景文件名必须是 `Environment` | ✅ 本目录的文件就叫这个名；📖 官方也这么要求 |
-| 必挂组件 | 场景里某个 GameObject 上要有 `EnvironmentSettings` | 📖 官方要求；❓ **本目录用反射挂上了它，但没验证过 Warudo 是否接受这个场景** |
+| 必挂组件 | 场景里某个 GameObject 上要有 `EnvironmentSettings`（脚本 guid `5119c7ec4a224016a35e372e38a47e39`） | ✅ 场景能被 Warudo 选中并切换过去（选中后画面全黑，见下节）；❓ 组件字段的实际生效语义未验证 |
 | 落点目录 | `<数据目录>/StreamingAssets/Environments` | ✅ 实测 |
 | 工作区 | 就是本目录（`modAssetPath` 指向这里） | ✅ 实测 |
 
@@ -28,10 +28,39 @@ Mod，Warudo 就把整个场景加载进来替换当前环境。
 | 文件 | 作用 |
 |---|---|
 | `Environment.unity` | 入口场景，含 `EnvironmentSettings` |
-| └ `HoWarudoModTests Marker` | 一个立方体，**故意放的标记物** |
-| └ `HoWarudoModTests Light` | 一盏平行光 |
+| └ `Environment Settings` | 挂 `EnvironmentSettings` 组件的空物体 |
+| └ `Directional Light` | 平行光（`!u!108`，`m_Type: 1`） |
+| └ `Ground` | 10×10 的扁立方体当地面 |
+| └ `Marker Cube` | 一个立方体，**故意放的标记物** |
 
 **为什么要放标记物**：空场景切过去和没切一样，光看画面没法判断加载成功没有。
+
+## ⚠️ 全黑问题（本次修复）
+
+❓ **现象**：第一版场景切过去**全黑**。原因排查如下。
+
+场景原本只有 `!u!29/104/157/196`（四个渲染设置块）+ `EnvironmentSettings` 空物体，
+**既没有光源、也没有任何几何体**，并且 `EnvironmentSettings` 的这三个字段全是 0：
+
+| 字段 | 修前 | 修后 | 依据 |
+|---|---|---|---|
+| `skyboxMaterial` | `{fileID: 0}` | Default-Skybox | ✅ `10304` 这个内置引用是 Unity 自己在 17 个场景里写的 |
+| `sunSource` | `{fileID: 0}` | 指向本场景的平行光 | ❓ 字段语义是读场景序列化推断的，有效性待实测 |
+| `environmentLightingAmbientColor` | `{0,0,0,0}` | `{0.5,0.5,0.5,1}` | ❓ 同上 |
+
+同时给场景补了 **Directional Light** 和两个立方体。立方体的内置引用
+`m_Mesh: {fileID: 10202, guid: 0000000000000000e000000000000000}`
+与 `m_Materials: {fileID: 10303, guid: 0000000000000000f000000000000000}`
+**都是从本工程里 Unity 自己生成的 `Mods/Props/Prop.prefab` 上抄下来的**，
+不是我猜的值；平行光的字段布局抄自本工程 `Assets/Hollow/ho宝石shader测试/Scene.unity`。
+
+### ❓ 仍未验证
+
+- Warudo 是否真的把 `skyboxMaterial` 应用到运行时天空盒
+- 场景里的**几何体**会不会被渲染（工坊真实环境包 38 MB ~ 557 MB，几乎必然含几何体，
+  但那是推断，不是实测）
+- `environmentLightingScene` / `environmentReflectionsSource` 的枚举取值含义
+- 是否需要有 `SceneRoots`(`!u!1660057539`) 块 —— 本场景**没有**也能被加载，故未加
 
 ## 构建
 
