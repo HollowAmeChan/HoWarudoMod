@@ -308,7 +308,8 @@ namespace HoWarudoModTests.EditorTools
                 {
                     object candidate = profiles.GetValue(i);
                     if (string.Equals(GetMember(candidate, "ModName") as string, modName, StringComparison.Ordinal) &&
-                        string.Equals(NormalizePath(GetMember(candidate, "ModAssetsPath") as string), assetFolder,
+                        string.Equals(ToCanonicalAssetPath(GetMember(candidate, "ModAssetsPath") as string),
+                            ToCanonicalAssetPath(assetFolder),
                             StringComparison.OrdinalIgnoreCase))
                     {
                         index = i;
@@ -398,7 +399,7 @@ namespace HoWarudoModTests.EditorTools
             {
                 object profile = profiles.GetValue(index);
                 var modName = GetMember(profile, "ModName") as string;
-                string assetPath = NormalizePath(GetMember(profile, "ModAssetsPath") as string);
+                string assetPath = ToCanonicalAssetPath(GetMember(profile, "ModAssetsPath") as string);
                 if (!assetPath.StartsWith(modsRootAbsolute, StringComparison.OrdinalIgnoreCase))
                     continue;   // 不是本仓库的工作区，不碰
 
@@ -674,6 +675,24 @@ namespace HoWarudoModTests.EditorTools
         private static string NormalizePath(string path)
         {
             return (path ?? string.Empty).Replace('\\', '/').TrimEnd('/');
+        }
+
+        /// <summary>
+        /// 工作区里的 modAssetPath 有两种写法并存：官方「New Mod」向导写相对路径
+        /// （Assets/...），本仓库写绝对路径（D:/.../Assets/...）。
+        /// 比较前必须归一化，否则同一条工作区会被当成"新的"而重复创建。
+        /// </summary>
+        private static string ToCanonicalAssetPath(string path)
+        {
+            string normalized = NormalizePath(path);
+            if (normalized.Length == 0)
+                return string.Empty;
+
+            if (normalized.Equals("Assets", StringComparison.OrdinalIgnoreCase) ||
+                normalized.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase))
+                return ToAbsolute(normalized);
+
+            return normalized;
         }
 
         private static Type FindType(string fullName)
