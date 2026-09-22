@@ -38,3 +38,7 @@ Thumbs.db
 
 # Build output produced by the HoModTestBuilder menu items.
 out/
+
+# Offline compile-check output (tools/compile-check.ps1).
+# Kept in a dot-folder so Unity never imports the produced DLL as a plugin.
+.compile-check/

@@ -30,11 +30,16 @@ HoWarudoModTests/
 │           ├── HoTestGreetNode.cs   节点 1：四种端口齐全
 │           └── Sub/
 │               └── HoTestAddNode.cs 节点 2：嵌套子目录 + 纯数据节点
+├── tools/
+│   └── compile-check.ps1            不开 Unity 的编译自检
 └── docs/
     └── 打包与脚本规范.md             规范与踩坑记录
 ```
 
-`Prop.prefab` 由构建脚本生成，不在仓库里（`out/` 也被 gitignore）。
+`Prop.prefab` 由构建脚本生成，不在仓库里（`out/` 被 gitignore）。
+
+编译自检与构建的产物都写在 **以 `.` 开头的目录**里（`out/`、`.compile-check/`）——
+Unity 会忽略任何以 `.` 开头的目录，这样产出的 DLL 就不会被 Unity 当成插件导入。
 
 ---
 

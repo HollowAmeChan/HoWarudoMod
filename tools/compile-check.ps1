@@ -18,7 +18,10 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
-$outDir   = Join-Path $repoRoot "out\compile-check"
+# IMPORTANT: never write the produced DLL anywhere Unity imports. Unity ignores any
+# folder whose name starts with ".", so ".compile-check" keeps the artifact invisible
+# to the asset pipeline (otherwise the DLL would be imported as a plugin).
+$outDir   = Join-Path $repoRoot ".compile-check"
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 
 if (-not (Test-Path $ManagedDir)) { throw "Warudo Managed folder not found: $ManagedDir" }
