@@ -67,12 +67,14 @@ VTubeStudioNode / VRM1SpringBoneWind）都带 Readme 或本地化文件，所以
 
 复核器已按此判定：`sharedassets.*` / `sceneassets.*` / `assemblymodules.dat` 三者至少有其一。
 
-## 怎么确认 Warudo 认了（✅ 已实测）
+## 怎么确认 Warudo 认了（✅ 已实机查验）
 
-✅ 打开 `Blueprints` → 节点面板 → 搜索 `Ho Test` → 出现分类
-**`HoWarudoModTests`** 下的两个节点：`Ho Test Greet` / `Ho Test Add`。
+✅ **蓝图 → 节点新建列表** → 出现分类 **`HoWarudoModTests`** 下的两个节点：
+`Ho Test Greet` / `Ho Test Add`。
 
-**不需要建资产、不需要连线。节点面板里出现了 = 插件加载成功。**
+> 这不是唯一入口，但是一个可以直接验收的入口；其余入口未逐一查验。
+
+**不需要建资产、不需要连线。节点列表里出现了 = 插件加载成功。**
 
 这也是 5 个类别里**唯一能从 Warudo 日志硬确认**的。日志在
 `%USERPROFILE%\AppData\LocalLow\HakuyaLabs\Warudo\Logs\*.log.gz`，

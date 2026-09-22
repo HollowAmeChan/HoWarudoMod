@@ -53,12 +53,11 @@ Mod，Warudo 就把整个场景加载进来替换当前环境。
 
 复核器允许 `sharedassets.*` / `sceneassets.*` 任选其一成对出现。
 
-## 怎么确认 Warudo 认了
+## 怎么确认 Warudo 认了（✅ 已实机查验）
 
-❓ **未验证。** 我推测是"新建 Environment 资产 → 在它的来源处选择 → 卡片选择器里找
-`Environments`"，**没有实机点过**。
+✅ **资源 → 环境 → 环境组件 → 源** → 在来源里能看到 `Environments`。
 
-✅ 可以确定的是：**Warudo 日志只写一行** `[LocalResourceMonitor] Started monitoring
-Environments (<路径>)`，**不记具体文件**，日志证明不了。
+> 这不是唯一入口，但是一个可以直接验收的入口；其余入口未逐一查验。
 
-**需要你实机确认入口位置。**
+✅ Warudo 日志只写一行 `[LocalResourceMonitor] Started monitoring Environments (<路径>)`，
+**不记具体文件**，日志证明不了。

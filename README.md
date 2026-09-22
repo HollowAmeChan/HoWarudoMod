@@ -43,9 +43,11 @@ Warudo **各类 Mod 的最小可参考实现**。
 `.warudo` 包里**不存类型字段**（`modinfo.dat` 与 `sharedassets.meta` 都没有），
 类型是"落点目录 + 入口资产名"两条约定。落点目录决定哪个内置 Asset 类型去枚举它：
 
-- `Props/` → `PropAsset` 的 Source 下拉
-- `CharacterAnimations/` → 角色的动画来源
-- `Plugins/` → 插件系统启动时加载
+- `Props/` → 蓝图里的 `道具源` 节点
+- `Particles/` → 蓝图里的 `粒子效果源` 节点
+- `Environments/` → 资源里的「环境」（环境组件 → 源）
+- `CharacterAnimations/` → 资源里的「角色 → 动画 → 待机动画」
+- `Plugins/` → 插件系统启动时加载，节点进蓝图节点新建列表
 
 往同一个 `.warudo` 里塞两个类别的入口，**不会报错**，但只有落点目录对应的那一个会生效，
 其余静默失效。所以：**一个类别一个目录，一个目录一个包。**
@@ -127,18 +129,17 @@ Warudo 把加载过程写在 `%USERPROFILE%\AppData\LocalLow\HakuyaLabs\Warudo\L
 
 **只有 Plugins 与 Characters 会写 `Load mod: <名字>`**；Props / Particles / Environments /
 CharacterAnimations 只会写一行 `Started monitoring <目录>`，**不记具体文件** ——
-那几类必须进 Warudo 在对应下拉里看：
+那几类必须进 Warudo 在 UI 里看：
 
-| 包 | 在 Warudo 里看哪里 |
+| 包 | ✅ 已实机查验的入口 |
 |---|---|
-| `Plugins` | `Blueprints` → 节点面板 → 分类 **`HoWarudoModTests`**（`Ho Test Greet` / `Ho Test Add`） |
-| `Props` | 通过 **Prop** 资产的 **Source** 选到 `Props` |
-| `Particles` | 通过粒子节点（`Spawn Particle` 等）的粒子来源选到 `Particles` |
-| `Environments` | 通过 **Environment** 资产的 **Source** 选到 `Environments`；切过去会看到一个立方体标记物 |
-| `CharacterAnimations` | 角色的**待机动画**选择器里出现一张卡片 `CharacterAnimations` |
+| `Plugins` | **蓝图 → 节点新建列表** → 分类 `HoWarudoModTests`（`Ho Test Greet` / `Ho Test Add`） |
+| `Props` | **蓝图 → `道具源` 节点** → 道具来源里选 `Props` |
+| `Particles` | **蓝图 → `粒子效果源` 节点** → 粒子来源里选 `Particles` |
+| `Environments` | **资源 → 环境 → 环境组件 → 源** → 选 `Environments`（切过去能看到立方体标记物） |
+| `CharacterAnimations` | **资源 → 角色 → 动画 → 待机动画** → 卡片网格里出现 `CharacterAnimations` |
 
-> ⚠️ 上表的 UI 名称只有 `CharacterAnimations` 一行是**实测**的（带搜索框的卡片选择器），
-> 其余几行是按 asset 类型名推的，实际用词可能不同。
+> 以上**都不是唯一入口**，但都是可以直接验收的入口。其余入口未逐一查验。
 
 ### 实测结论：一个角色动画 Mod = 一个动画
 
