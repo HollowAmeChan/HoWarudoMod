@@ -1,0 +1,40 @@
+# Unity .gitignore for a folder living inside a Unity project.
+# The project-level Library/Temp/obj are outside this folder, but keep this here so the
+# repo stays clean if it is ever cloned standalone.
+
+# Unity generated
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Uu]ser[Ss]ettings/
+[Mm]emoryCaptures/
+[Rr]ecordings/
+
+# Never ignore .meta: Unity asset identity depends on them.
+!*.meta
+
+# IDE / tooling
+.vs/
+.idea/
+.vscode/
+*.csproj
+*.sln
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build output produced by the HoModTestBuilder menu items.
+out/
