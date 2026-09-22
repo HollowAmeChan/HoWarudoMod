@@ -62,6 +62,32 @@ Warudo **各类 Mod 的最小可参考实现**。
 往同一个 `.warudo` 里塞两个类别的入口，**不会报错**，但只有落点目录对应的那一个会生效，
 其余静默失效。所以：**一个类别一个目录，一个目录一个包。**
 
+### ★ 但「代码注册」的类型不适用上面这条：一个包可以装任意多个
+
+规则要按**谁来注册**分成两类：
+
+| 注册方式 | 类型 | 一个包能装几个 | 能跨分类吗 |
+|---|---|---|---|
+| **代码注册**（`[PluginType]` 里列清单） | `NodeTypes` / `AssetTypes` | **任意多个** | ✅ 能 |
+| **入口资产名决定** | `Prop.prefab` / `Particle.prefab` / `Environment.unity` / `Animation.anim` | 一个 | ❌ 不能 |
+
+✅ 实测证据：
+
+- `Mods/Plugins/` 一个包，`NodeTypes` 里列了 2 个节点，两个都出现在节点面板
+- `Mods/CustomAsset/` 一个包，`AssetTypes` 里列了 **7 个资源类型**，跨
+  `CATEGORY_DEBUG` / `CATEGORY_PROP` / `CATEGORY_MOTION_CAPTURE` **三个分组**，七个全部出现
+- 反过来，`Mods/CharacterAnimations/` 里放过第二个 `.anim`，**完全不会出现**
+
+也就是说：**一个 `.warudo` 可以同时投递多个跨分类的对象，前提是这些对象由代码注册。**
+
+❗ 所以实际做 Mod 时**不必把节点和资源分成两个包** —— 一个 `[PluginType]` 里
+把 `NodeTypes` 和 `AssetTypes` 都列全就行。本仓库分成 `Plugins` / `CustomAsset`
+两个包纯粹是为了最小验证的隔离（一个包只验一件事）。
+
+❓ 还没测过的一条：`Prop.prefab` / `Particle.prefab` 究竟是「**必须叫这个名**」
+还是「**包里只取一个 prefab**」。目前只在角色动画上直接验过后者成立。
+如果是后者，那道具/粒子也是一包装多个。
+
 ---
 
 ## 目录结构
