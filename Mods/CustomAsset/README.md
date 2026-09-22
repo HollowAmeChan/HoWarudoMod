@@ -87,10 +87,16 @@ public class HelloWorldAsset : Asset { }
 
 ## 本目录里有什么
 
-| 文件 | 作用 |
-|---|---|
-| `HoTestAssetPlugin.cs` | `[PluginType]` 入口，`AssetTypes = new[] { typeof(HoTestCubeAsset) }` |
-| `HoTestCubeAsset.cs` | `[AssetType]` 本体，继承 `GameObjectAsset`，造一个每帧自转的立方体；`OnCreate` 里 `SetActive(true)`，`Status` 实时显示 active 状态与帧计数 |
+| 文件 | 作用 | 继承的基类 |
+|---|---|---|
+| `HoTestAssetPlugin.cs` | `[PluginType]` 入口，`AssetTypes` 里列出全部资源类型 | — |
+| `HoTestCubeAsset.cs` | 立方体，`Transform` 数据输入驱动自转 | `GameObjectAsset` |
+| `HoTestCounterAsset.cs` | 纯逻辑计数器，**没有 GameObject** | `Asset`（最裸） |
+| `HoTestFaceTrackerAsset.cs` | **面捕追踪器**，输出合成正弦混合形状 | `GenericTrackerAsset` |
+
+> ✅ 一个插件 Mod 可以一次注册**多个**资源类型 —— 全部列在
+> `[PluginType(..., AssetTypes = new[] { ... })]` 里即可，缺一个就不出现在「添加资源」菜单。
+> 这和 `NodeTypes` 是同一个道理。
 
 ✅ **两份 `.cs` 都用 Roslyn 对着真实 Warudo 0.15.0 程序集编译通过**
 （脚本：`.warudo-mod-research/.tools/compile-check-mod.ps1`，引用 `<游戏>/Warudo_Data/Managed`）。
@@ -122,19 +128,50 @@ public class HelloWorldAsset : Asset { }
 | `assemblymodules.dat` | ✅ 必有 | 本目录有 `.cs`，编译成 `umod-compiled-<GUID>` |
 | `sharedassets.bin` / `.meta` | ❓ 待实测 | 场景没引用工程内资产时可能不生成；参照 VRM1SpringBoneWind 是**有**的 |
 
-## 怎么在 Warudo 里验收（本轮待你实测）
+## 怎么在 Warudo 里验收
 
-1. 把 `CustomAsset.warudo` 构建进 `StreamingAssets/Plugins`
-2. 重启 Warudo（插件类 Mod 只在启动时加载）
-3. **资源 → 添加资源 → `CATEGORY_DEBUG` 分组** → 应该能看到 `Ho Test Cube`
-4. 添加它 → 场景里出现一个小的立方体，**应当持续自转**（不碰它也在转）
-5. 选中它 → 面板上应有 `Transform`、`Status`、`SpinSpeed` 三个数据输入
-   和一个 `ResetRotation` 触发器按钮；点按钮立方体转正
-6. 重点看 `Status`：应当是 `active=True  frames=<一直涨>  rotY=<一直变>`
+构建 `CustomAsset` 工作区 → 重启 Warudo（插件类 Mod 只在启动时加载）→ 然后：
 
-> 为什么用「每帧自转」当验收标志：静止的立方体分不清是资源活着还是场景里本来就有东西，
-> 转起来就说明 `OnUpdate()` 真的在跑。`frames` 计数是第二道防线 ——
-> 就算看起来没转，`frames` 涨不涨也能直接区分「没跑」和「跑了但被覆盖了」。
+### A. 三个资源类型都出现了吗
+
+**资源 → 添加资源**，应当看到：
+
+| 分组 | 条目 | 来自 |
+|---|---|---|
+| `CATEGORY_DEBUG` | `Ho Test Cube` | `HoTestCubeAsset` |
+| `CATEGORY_DEBUG` | `Ho Test Counter` | `HoTestCounterAsset` |
+| `CATEGORY_MOTION_CAPTURE` | `Ho Test Face Tracker` | `HoTestFaceTrackerAsset` |
+
+三个都在 = `AssetTypes` 注册成功；少一个就是漏列了。
+
+### B. `Ho Test Cube`（GameObjectAsset）
+
+- 添加后场景里出现小立方体，**不碰它也持续自转**
+- 选中它：`Transform` / `Status` / `SpinSpeed` 三个数据输入 + `ResetRotation` 触发器
+- `Status` 显示 `active=...  frames=<一直涨>  rotY=<一直变>`
+
+### C. `Ho Test Counter`（最裸 Asset，没有 GameObject）
+
+- 添加后场景里**不会出现任何东西**（它本来就没有 GameObject，这是正常的）
+- 选中它：`Target` / `Interval` / `Count` 三个数据输入 + `Reset` / `Step` 两个触发器
+- 默认 `Target=10, Interval=1` → 每秒 `Count` +1，到 10 停下，`Status` 变成 `reached target 10`
+- 点 `Reset` 归零重新数
+
+> 这一条验的是「资源不一定有实体」+「纯逻辑资源的 `BroadcastDataInput` 能让 UI 跟着动」。
+
+### D. `Ho Test Face Tracker`（面捕追踪器）★ 重点
+
+1. 添加这个资源
+2. 它自带的数据输入里找到 **`Character`**，选定一个角色
+3. 角色的脸应当**不接任何硬件就动起来**：
+   - 嘴巴 2 秒开合一次
+   - 每 3 秒眨一次眼
+   - 嘴角 8 秒一个来回的笑容
+
+看到脸动 = 整条链路（`UpdateRawData()` → `RawBlendShapes` → 角色）通了。
+看不到动 = ❓ 说明还需要配 tracking template 或手动连线，见「下一步」。
+
+> `TestSpeed` 可以调快慢；设 0 就冻住。
 
 ## ★ 实测定论：`GameObjectAsset` 的 transform 归**数据输入**所有
 
@@ -209,24 +246,125 @@ Transform.Rotation = euler;
 
 要补这个对照实验说一声。
 
-## ⚠️ 踩坑：官方文档的 `OnCreate` 签名对 `GameObjectAsset` 是错的
+## ⚠️ 踩坑：官方示例/文档里的访问修饰符在 0.15.0 上基本都过时了
 
-📖 官方 Assets 文档的示例写的是：
+这是本目录最有复用价值的一条。**官方文档和官方示例里的 `OnCreate` / `UseHeadIK`
+签名与 0.15.0 的实际程序集不一致**，照抄必报 CS0507。
+下面全部是本地 Roslyn 编译实测（`compile-check-mod.ps1`），**光看文档看不出来**。
+
+| 成员 | 官方文档/示例写的 | ✅ 0.15.0 实际是 | 出处 |
+|---|---|---|---|
+| `OnCreate()`（`Asset` 及所有子类） | `public override` | **`protected override`** | 定义在 `Warudo.Core.Data.Entity.OnCreate()` |
+| `GameObjectAsset.OnCreate()` | `public override` | **`protected override`** | 同上 |
+| `GenericTrackerAsset.UseHeadIK` | `protected override` | **`public override`** | 官方 VMC 示例写的是 protected（0.14.x） |
+| `GenericTrackerAsset.UseCharacterDaemon` | `protected override` | **`public override`** | 同上 |
+| `GenericTrackerAsset.CanCalibrate` | `protected override` | **`public override`** | 同上 |
+| `GenericTrackerAsset.InputBlendShapes` | `public override` | `public override` ✅ 一致 | |
+| `GenericTrackerAsset.UpdateRawData()` | `protected override` | `protected override` ✅ 一致 | |
+| `Asset.OnUpdate()` | `public override` | `public override` ✅ 一致 | |
+
+结论：**拿到任何 Warudo 示例代码，先本地编译一遍再抄。**
+`compile-check-mod.ps1` 就是干这个的，几秒钟出结果，不用开 Unity。
+
+## 已做的面捕追踪器
+
+你说的那个「放自定义追踪器类型的仓库」是
+**[HakuyaLabs/WarudoPluginExamples](https://github.com/HakuyaLabs/WarudoPluginExamples)**，里面：
+
+| 文件 | 用途 |
+|---|---|
+| `VMC/VMCFaceTrackingTemplate.cs` | **面捕**追踪模板，继承 `FaceTrackingTemplate` |
+| `VMC/VMCPoseTrackingTemplate.cs` | 姿态追踪模板 |
+| `VMC/Assets/VMCReceiverAsset.cs` | 真实的自定义追踪器资源，`[AssetType] VMCReceiverAsset : GenericTrackerAsset` |
+| `VMC/Nodes/GetVMCReceiverDataNode.cs` | 配套的取数节点 |
+| `StreamDeck/` | 插件 + 节点 + Service 的完整例子 |
+
+本目录的 `HoTestFaceTrackerAsset.cs` 就是照这个形态写的，但它**只依赖 Plugins.Core**，
+不碰游戏本体，所以能本地编译验证。
+
+### 关键发现：混合形状名字是 UTF-16 字面量，ASCII 扫 DLL 扫不到
+
+Warudo 认的名字是 ARKit 那 52 个的**小驼峰**写法（`jawOpen` / `eyeBlinkLeft` / `mouthSmileLeft` …）。
+
+✅ **证据获取方式**（这个坑值得记住）：`.NET` 元数据里
+**类型/字段/方法名是 UTF-8（`#Strings` 堆），而字符串字面量是 UTF-16（`#US` 堆）**。
+用 ASCII 扫 `Warudo.Plugins.Core.dll` 完全找不到这批名字，改成按 UTF-16 每两字节取一个
+`char` 再扫就全出来了。
+
+✅ 但**不要手抄这份清单** —— 基类已经给了现成的：
+`Warudo.Plugins.Core.Utils.BlendShapes.ARKitBlendShapeNames`（`public static string[]`，本机元数据实测）。
+本目录就是这么用的：
 
 ```csharp
-public override void OnCreate() { ... }   // ← 照抄到 GameObjectAsset 上编译不过
+public override List<string> InputBlendShapes => BlendShapes.ARKitBlendShapeNames.ToList();
 ```
 
-❌ 继承 `GameObjectAsset` 时这样写会报：
+### 基类已经替你做完了大部分
 
-```
-error CS0507: 当重写"protected"继承成员"GameObjectAsset.OnCreate()"时，无法更改访问修饰符
+✅ 元数据转储实测，`GenericTrackerAsset` **自带一大堆 `[DataInput]`**，我们一行都不用写：
+`MirroredTracking` / `BlendShapeSensitivity` / `HeadMovementIntensity` / `MaximalHeadTranslation` /
+`BodyMovementIntensity` / `BodyRotation*` / `HeadRotationIntensity` / `HeadRotationOffset` /
+`EyeMovementIntensity` / `EyeBlinkSensitivity` / `LinkedEyeBlinking` / `BlendShapesMapping` …
+也自带可读的 `IsTracked` / `LatestBlendShapes` / `LatestHeadPosition` 等。
+
+子类只要提供两样：
+
+1. `InputBlendShapes` —— 本追踪器提供哪些混合形状
+2. `UpdateRawData()` —— 每帧往 `RawBlendShapes` / `RawBoneRotations` / `RawBonePositions` /
+   `RawRootTransform` 里填原始数据；返回 `false` 表示这帧没数据
+
+### 本目录的追踪器输出的是**合成正弦数据**
+
+不接任何硬件：`jawOpen` 2 秒一个来回、每 3 秒眨一次眼、`mouthSmile*` 8 秒一个来回。
+目的是把 **添加资源 → 指定角色 → 脸动** 这条链路先验通。
+以后接真硬件，只改 `UpdateRawData()` 里的赋值，其余都不用动。
+
+❓ **还没实测过**：它到底能不能独立工作（不配 template），以及混合形状是否真能到达角色脸。
+
+## 下一步：两种还没覆盖的资源类型
+
+### 1. `CharacterTrackingTemplate` —— 让它出现在「追踪方案」下拉里
+
+追踪器资源加进去之后，用户还得手动指定角色、手动连线。官方做法是配一个
+**tracking template**，让 Warudo 在角色的「追踪方案」里直接列出 `Ho Test Face Tracking`，
+选中就自动建资源 + 连好蓝图。
+
+❓ **障碍**：官方示例用的 `Warudo.Bootstrap.Templates.FaceTrackingTemplate` 在
+**`Assembly-CSharp.dll`（游戏本体，3.3 MB）**里，不在 `Warudo.Core.dll` /
+`Warudo.Plugins.Core.dll` 里。Plugins.Core 里只有它更底层的基类
+`Warudo.Plugins.Core.Assets.Character.CharacterTrackingTemplate`。
+
+所以有两条路，**都没试过**：
+- 直接继承 `CharacterTrackingTemplate`（Plugins.Core 里的，肯定引用得到），
+  自己实现 `Apply(CharacterAsset)` —— 但 `CreateReceiverResult` / `IBlendShapeMapper` /
+  `IdentityBlendShapeMapper` 这些辅助类型也在 `Assembly-CSharp.dll` 里
+- 赌 UMod 编 Mod 时也引用 `Assembly-CSharp.dll`（我们的编译检查脚本会把它算进去，
+  因为它在 `Managed` 目录里 —— 但**这不代表 UMod 也这么干**）
+
+要往下走，最快的验证是：写一个最小 template 文件，**在 Unity 里真构建一次**，
+看 UMod 报不报引用错误。一次构建就能定性。
+
+### 2. `FromSourceGameObjectAsset` —— 「从来源加载」型资源
+
+道具（`PropAsset`）和角色走的就是这条路：不是自己造 GameObject，而是从 Mod 资源里**选一个来源**加载。
+
+✅ 本机探针实测（用一个故意写错签名的空子类反复编译，让编译器报出正确签名）：
+
+```csharp
+// 抽象成员只有一个：
+protected override UniTask<AutoCompleteList> GetSources();
+//   UniTask            -> Cysharp.Threading.Tasks
+//   AutoCompleteList   -> Warudo.Core.Data（public 字段 List<AutoCompleteCategory> categories）
+//   AutoCompleteEntry  -> public string label / public string value
+//   还有个扩展方法 AutoCompleteExtensions.ToAutoCompleteList(this IEnumerable<AutoCompleteEntry>)
 ```
 
-✅ 正确写法是 **`protected override void OnCreate()`**（本目录实测）。
-文档那个 `public` 只对**直接继承 `Asset`** 成立（那一条未验证）。
-这是 `.warudo-mod-research/.tools/compile-check-mod.ps1` 本地编译检查抓出来的 ——
-**光看文档看不出来**。
+❓ **障碍**：`GetSources()` 只是「列出可选来源」。真要让选中的来源**加载出东西**，
+得接 Warudo 的资源提供器 / 解析器体系（官方文档有
+`Resource Providers & Resolvers` 一章）。这是一块独立调研，没摸清之前不硬写 —— 
+写个能编译但加载不出任何东西的「最小实现」没有验证价值。
+
+要继续就说一声，我去读那一章 + 找工坊里真实的来源型资源 Mod 对照。
 
 ## 其余未验证项（别当成结论）
 
@@ -235,35 +373,5 @@ error CS0507: 当重写"protected"继承成员"GameObjectAsset.OnCreate()"时，
 - ❓ `sharedassets.*` 到底生不生成（见上表）
 - ❓ `SetActive(true)` 是否真的必需（见上一节的对照实验说明）
 
-## 未来要做的事：自定义面捕追踪器
-
-你说的「专门放自定义追踪器类型的仓库」是
-**[HakuyaLabs/WarudoPluginExamples](https://github.com/HakuyaLabs/WarudoPluginExamples)**，
-里面正好有现成模板：
-
-| 文件 | 用途 |
-|---|---|
-| `VMC/VMCFaceTrackingTemplate.cs` | **面捕**追踪模板，继承 `FaceTrackingTemplate` |
-| `VMC/VMCPoseTrackingTemplate.cs` | 姿态追踪模板 |
-| `VMC/Assets/VMCReceiverAsset.cs` | **一个真实的自定义追踪器资源**，`[AssetType] VMCReceiverAsset : GenericTrackerAsset` |
-| `VMC/Nodes/GetVMCReceiverDataNode.cs` | 配套的取数节点 |
-| `StreamDeck/` | 插件 + 节点 + Service 的完整例子 |
-
-✅ 已读源码，要点：
-
-```csharp
-[AssetType(Id = "78fac3fd-...", Title = "VMC_RECEIVER", Category = "CATEGORY_MOTION_CAPTURE")]
-public class VMCReceiverAsset : GenericTrackerAsset
-{
-    protected override bool UseHeadIK => false;
-    protected override bool UseCharacterDaemon => false;
-    protected override bool CanCalibrate => false;
-    public override List<string> InputBlendShapes => ...;
-    protected override bool UpdateRawData() { ... }   // 往 RawBlendShapes / RawBoneRotations 里填
-}
-```
-
-而 `FaceTrackingTemplate` 负责把它挂到角色的追踪方案列表里
-（`AssetDependencyTypes` / `CreateReceiver` / `BlendShapeMapper`）。
-
 ❓ 这些都还没在本机试过，属于下一步调研。
+

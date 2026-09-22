@@ -28,7 +28,9 @@ namespace HoWarudoModTests.CustomAsset
         Author = "Hollow",
         AssetTypes = new[]
         {
-            typeof(HoTestCubeAsset)
+            typeof(HoTestCubeAsset),
+            typeof(HoTestCounterAsset),
+            typeof(HoTestFaceTrackerAsset)
         })]
     public class HoTestAssetPlugin : Plugin
     {
