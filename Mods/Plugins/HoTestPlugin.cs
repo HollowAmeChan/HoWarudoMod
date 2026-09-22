@@ -13,10 +13,10 @@
 using Warudo.Core.Attributes;
 using Warudo.Core.Plugins;
 
-namespace HoWarudoModTests.PluginMod
+namespace HoWarudoModTests.Plugins
 {
     [PluginType(
-        Id = "howarudomodtests.plugin",
+        Id = "howarudomodtests.plugins",
         Name = "Ho Warudo Mod Tests",
         Description = "Minimal multi-file plugin mod used to verify Warudo packaging.",
         Version = "1.0.0",

@@ -2,7 +2,7 @@
 //
 // 存在的意义：证明 UMod 的脚本扫描会递归走进 Mod 工作区的子目录。
 
-namespace HoWarudoModTests.Prop.Internal
+namespace HoWarudoModTests.Props.Internal
 {
     public static class HoTestPropInternal
     {

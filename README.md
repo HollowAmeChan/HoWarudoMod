@@ -1,14 +1,39 @@
 # HoWarudoModTests
 
-Warudo **非角色类 Mod** 的最小打包测试工程。
+Warudo **各类 Mod 的最小可参考实现**。
 
 放在 `BreakWarudo/Assets/HoWarudoModTests/` 下，是一个独立的 git 仓库，可以单独推到 GitHub。
 
-它验证两件事：
+**核心规则：一个目录一个类别。** 目录名就是 Warudo 数据目录里的目标目录名，
+`HoModTestBuilder` 会给每个目录自动建一个同名工作区（Export Profile），一一对应。
 
-1. **道具类 Mod（资源型）** 怎么打包 —— `Mods/HoTestProp`
-2. **插件类 Mod（蓝图节点型）** 怎么打包 —— `Mods/HoTestPlugin`
-3. 顺带证明**多文件 / 多级子目录的脚本**会被完整编进 Mod 程序集
+做新 Mod 时照抄对应目录即可。
+
+---
+
+## 五个类别
+
+| 目录 | 类别 | 入口资产（名字必须一致） | 有脚本？ |
+|---|---|---|---|
+| `Mods/Props` | 道具 | `Prop.prefab` | ✅ 用来验证多文件脚本打包 |
+| `Mods/Particles` | 粒子 | `Particle.prefab` | ❌ 纯资源 |
+| `Mods/Environments` | 环境 | `Environment.unity`（挂 `EnvironmentSettings`） | ❌ 纯资源 |
+| `Mods/CharacterAnimations` | 角色动画 | `Animation.anim` | ❌ 纯资源 |
+| `Mods/Plugins` | 插件（蓝图节点） | 无入口资产，看 `[PluginType]` 类 | ✅ |
+
+入口资产由 `1 - 生成各类别最小示例` 自动补齐（插件入口是源码，已经在仓库里）。
+
+### 为什么不能把几个类别塞进一个目录
+
+`.warudo` 包里**不存类型字段**（`modinfo.dat` 与 `sharedassets.meta` 都没有），
+类型是"落点目录 + 入口资产名"两条约定。落点目录决定哪个内置 Asset 类型去枚举它：
+
+- `Props/` → `PropAsset` 的 Source 下拉
+- `CharacterAnimations/` → 角色的动画来源
+- `Plugins/` → 插件系统启动时加载
+
+往同一个 `.warudo` 里塞两个类别的入口，**不会报错**，但只有落点目录对应的那一个会生效，
+其余静默失效。所以：**一个类别一个目录，一个目录一个包。**
 
 ---
 
@@ -17,29 +42,34 @@ Warudo **非角色类 Mod** 的最小打包测试工程。
 ```
 HoWarudoModTests/
 ├── Editor/
-│   └── HoModTestBuilder.cs          构建入口（菜单 + batchmode）
+│   └── HoModTestBuilder.cs           脚手架 + 工作区同步 + 构建 + 产物校验
 ├── Mods/
-│   ├── HoTestProp/                  ← 道具 Mod 工作区（modAssetPath）
-│   │   ├── HoTestPropSpinner.cs     脚本 1：挂在 Prop 根节点上的 MonoBehaviour
-│   │   ├── HoTestPropUtils.cs       脚本 2：同目录，但没有任何组件引用它
+│   ├── Props/                        ← 道具（入口 Prop.prefab 自动生成）
+│   │   ├── HoTestPropSpinner.cs      挂在 Prop 根节点上的 MonoBehaviour
+│   │   ├── HoTestPropUtils.cs        同目录，但没有任何组件引用它
 │   │   └── Internal/
-│   │       └── HoTestPropInternal.cs 脚本 3：子目录里
-│   └── HoTestPlugin/                ← 插件 Mod 工作区
-│       ├── HoTestPlugin.cs          [PluginType] 入口
+│   │       └── HoTestPropInternal.cs 子目录里
+│   ├── Particles/                    ← 粒子（入口 Particle.prefab 自动生成）
+│   ├── Environments/                 ← 环境（入口 Environment.unity 自动生成）
+│   ├── CharacterAnimations/          ← 角色动画（入口 Animation.anim 自动生成）
+│   └── Plugins/                      ← 插件
+│       ├── HoTestPlugin.cs           [PluginType] 入口
 │       └── Nodes/
-│           ├── HoTestGreetNode.cs   节点 1：四种端口齐全
+│           ├── HoTestGreetNode.cs    节点 1：四种端口齐全
 │           └── Sub/
-│               └── HoTestAddNode.cs 节点 2：嵌套子目录 + 纯数据节点
+│               └── HoTestAddNode.cs  节点 2：嵌套子目录 + 纯数据节点
 ├── tools/
-│   └── compile-check.ps1            不开 Unity 的编译自检
+│   ├── compile-check.ps1             编译 Mod 脚本（对真机 Warudo DLL）
+│   └── compile-check-editor.ps1      编译 Editor + Mods（对 UnityEditor + UMod SDK）
 └── docs/
-    └── 打包与脚本规范.md             规范与踩坑记录
+    └── 打包与脚本规范.md              规范与踩坑记录
 ```
 
-`Prop.prefab` 由构建脚本生成，不在仓库里（`out/` 被 gitignore）。
+`Props` 里那三个脚本是**故意**的：一个挂在 Prefab 上、一个没人引用、一个在子目录里 ——
+用来证明 **UMod 会把工作区里所有 `.cs` 都编进 Mod 程序集**，与是否被引用无关。
 
-编译自检与构建的产物都写在 **以 `.` 开头的目录**里（`out/`、`.compile-check/`）——
-Unity 会忽略任何以 `.` 开头的目录，这样产出的 DLL 就不会被 Unity 当成插件导入。
+`Mods/*` 里只有 `Props` 和 `Plugins` 有源码；另外三个是纯资源 Mod，产包里不会有
+`assemblymodules.dat`，这也是一种合法形态。
 
 ---
 
@@ -47,45 +77,50 @@ Unity 会忽略任何以 `.` 开头的目录，这样产出的 DLL 就不会被 
 
 ### 图形界面
 
-Unity 菜单栏依次执行：
-
 | 菜单 | 作用 |
 |---|---|
-| `HoWarudoModTests/1 - 生成 Prop 预制体` | 在 `Mods/HoTestProp/` 下生成根名为 `Prop` 的预制体，并挂上 `HoTestPropSpinner` |
-| `HoWarudoModTests/2 - 配置导出工作区` | 建两个 Export Profile：`HoTestProp` → `out/Props`，`HoTestPlugin` → `out/Plugins` |
-| `HoWarudoModTests/3 - 构建全部 Mod` | 调用官方构建入口，产出两个 `.warudo` |
-| `HoWarudoModTests/4 - 校验产物 .warudo` | 自己解析产物，打印包内条目与关键判定 |
+| `HoWarudoModTests/1 - 生成各类别最小示例` | 给每个类别目录补齐缺失的入口资产（已存在就跳过） |
+| `HoWarudoModTests/2 - 同步工作区（一目录一工作区）` | 每个 `Mods/<类别>/` 建/更新一个同名 Export Profile，导出目录指向 Warudo 数据目录下的对应子目录 |
+| `HoWarudoModTests/3 - 构建全部` | 只构建资产目录在 `Mods/` 下的工作区，逐个调官方构建入口 |
+| `HoWarudoModTests/4 - 校验产物 .warudo` | 解析产物，打印包内条目与关键判定 |
+
+做新 Mod 的流程：复制一个类别目录 → 改名/改内容 → 点 2、3、4。
 
 ### 命令行（batchmode）
 
 ```powershell
-& "D:\Unity\Unity 2021.3.45f2\Editor\Unity.exe" -batchmode `
-  -projectPath "D:\Unity_Project\BreakWarudo" `
-  -executeMethod HoWarudoModTests.EditorTools.HoModTestBuilder.RunAll `
-  -logFile "D:\Unity_Project\BreakWarudo\Assets\HoWarudoModTests\out\build.log"
+Start-Process -FilePath "D:\Unity\Unity 2021.3.45f2\Editor\Unity.exe" -Wait -PassThru -ArgumentList @(
+  '-batchmode',
+  '-projectPath', 'D:\Unity_Project\BreakWarudo',
+  '-executeMethod', 'HoWarudoModTests.EditorTools.HoModTestBuilder.RunAll',
+  '-logFile', 'D:\Unity_Project\BreakWarudo\Assets\HoWarudoModTests\out\build.log'
+)
 ```
 
-`RunAll` = 1 → 2 → 3 → 4，最后把报告写到 `out/build-report.txt`，退出码 0 表示全部成功。
+`RunAll` = 1 → 2 → 3 → 4，报告写到 `out/build-report.txt`，退出码 0 表示全部成功。
 
-> 注意：`Unity.exe` 是 GUI 程序，PowerShell 里用 `&` 调用**不会等待**。要等它结束请用
-> `Start-Process -Wait -PassThru`。
+> `Unity.exe` 是 GUI 程序，PowerShell 里用 `&` 调用**不会等待**，要等它结束必须用
+> `Start-Process -Wait`。
 
 ### 不启动 Unity 的编译自检（秒级）
 
 ```powershell
-powershell -File tools\compile-check.ps1
+powershell -File tools\compile-check.ps1          # 只编译 Mods/**/*.cs
+powershell -File tools\compile-check-editor.ps1   # 编译 Editor/ + Mods/
 ```
 
-它用 Roslyn 把 `Mods/*/**.cs` 直接对着**真机 Warudo DLL**（默认 `D:\steam\...\Warudo_Data\Managed`）
-编译一遍，不经过 Unity。命名空间遮蔽、字段撞基类这类错误几秒就能发现，不用等编辑器导入。
-换路径用 `-ManagedDir` / `-CscPath`。
+分别对着**真机 Warudo DLL** 和 **UnityEditor + UMod SDK** 编译。
+命名空间遮蔽、字段撞基类这类错误几秒就能发现，不用等编辑器导入。
+换路径用 `-ManagedDir` / `-CscPath` 等参数。
+
+编译产物写在 `.compile-check/` —— **Unity 会忽略任何以 `.` 开头的目录**，
+所以产出的 DLL 不会被 Unity 当成插件导入。
 
 ---
 
 ## 产物怎么判定
 
-构建完成后，`out/Props/HoTestProp.warudo` 和 `out/Plugins/HoTestPlugin.warudo` 是两个
-`UMOD 头（12 字节）+ 标准 ZIP` 的包。判据：
+每个产物都是 `UMOD 头（12 字节）+ 标准 ZIP`。判据：
 
 | 条目 | 纯资源 Mod | 带 C# 脚本的 Mod |
 |---|---|---|
@@ -94,36 +129,40 @@ powershell -File tools\compile-check.ps1
 | `sceneassets.bin` / `.meta` | 仅环境 Mod | — |
 | **`assemblymodules.dat`** | ❌ | **✅ ← 有它才说明脚本真的被编译进去了** |
 
-* `HoTestProp` 挂了自定义 MonoBehaviour → 应该有 `assemblymodules.dat`
-* `HoTestPlugin` 是插件 → 必须有 `assemblymodules.dat`
+* `Props` / `Plugins` 应该有 `assemblymodules.dat`
+* `Particles` / `CharacterAnimations` 不应该有（纯资源）
+* `Environments` 应该用 `sceneassets.*` 而不是 `sharedassets.*`
 
-如果 `HoTestPlugin.warudo` 里**没有** `assemblymodules.dat`，说明 UMod 一个脚本都没编译，
+如果带脚本的产包里**没有** `assemblymodules.dat`，说明 UMod 一个脚本都没编译，
 99% 是工程根目录缺少 Unity 生成的 `.csproj`（见下）。
 
 ### 更进一步的类型级校验
 
 `assemblymodules.dat` 里是编译后的托管程序集（`umod-compiled-<GUID>.dll`）。
-要确认 `HoTestPropSpinner` / `HoTestPlugin` / 两个 Node 类型真的在里面，
-可以把内嵌 PE 抽出来看 ECMA-335 类型表 —— 工具在 HoUnityTools 仓库的
-`.warudo-mod-research/.tools/` 下（`extract_warudo_mod_assemblies.py` + `WarudoApiScan`）。
+要确认具体类型真的在里面，可以把内嵌 PE 抽出来看 ECMA-335 类型表 —— 工具在
+HoUnityTools 仓库的 `.warudo-mod-research/.tools/` 下
+（`extract_warudo_mod_assemblies.py` + `WarudoApiScan`）。
 
 ---
 
 ## 装进 Warudo 试
 
-把产物放到 Warudo 数据目录：
+`2 - 同步工作区` 会把导出目录直接指到 Warudo 数据目录，所以构建完就已经装好了：
 
 ```
-<Steam>\steamapps\common\Warudo\Warudo_Data\StreamingAssets\Props\HoTestProp.warudo
-<Steam>\steamapps\common\Warudo\Warudo_Data\StreamingAssets\Plugins\HoTestPlugin.warudo
+<Steam>\steamapps\common\Warudo\Warudo_Data\StreamingAssets\Props\Props.warudo
+<Steam>\steamapps\common\Warudo\Warudo_Data\StreamingAssets\Plugins\Plugins.warudo
+...
 ```
 
-也可以在 `2 - 配置导出工作区` 之后手动把 `OutputRoot` 改成数据目录，直接构建到目标位置。
+数据目录是**从你已有的工作区反推**的：取任意一个导出目录，末段是已知类别名就退一级。
+推不出来时会报错并提示你先把某个工作区的导出目录指到 `StreamingAssets/<类别>`。
 
 装好后：
 
-* `Props` 里应能选到 `HoTestProp` 这个道具，旋转动画会跑起来；
-* 节点面板里应出现 `HoWarudoModTests` 分类下的 `Ho Test Greet` 和 `Ho Test Add`。
+* `Props` 里能选到 `Props` 这个道具，旋转动画会跑起来；
+* 节点面板里出现 `HoWarudoModTests` 分类下的 `Ho Test Greet` 和 `Ho Test Add`；
+* 放进去不用重启 Warudo —— 同名文件覆盖后它会自动重载。
 
 ---
 
@@ -136,29 +175,31 @@ powershell -File tools\compile-check.ps1
    修法：`Edit > Preferences > External Tools` 选好代码编辑器 → `Regenerate project files`。
    `HoModTestBuilder` 在构建前会检查并按需触发重新生成。
 
-2. **Warudo 是 BiRP，不是 URP。** 道具/粒子的材质请用 Built-in 的 `Standard` 等着色器。
+2. **一个目录只能放一个类别。** 见上文。混放不报错，只是静默失效。
+
+3. **Warudo 是 BiRP，不是 URP。** 道具/粒子的材质请用 Built-in 的 `Standard` 等着色器。
    用 `Universal Render Pipeline/Lit` 做出来的 Mod 在 Warudo 里会丢材质。
 
-3. **Mod 脚本不能用 `System.Reflection`，也不能用 `System.IO`。**
+4. **Mod 脚本不能用 `System.Reflection`，也不能用 `System.IO`。**
    UMod 在编译后会做 API 引用审查，命中直接构建失败。
    连 `exception.GetType().Name` 这种写法也会被拒（IL 层是 `MemberInfo.Name`）。
 
-4. **插件 Mod 导出前先关掉 Warudo**，并确认 `StreamingAssets/Playground` 下没有同名脚本，
+5. **插件 Mod 导出前先关掉 Warudo**，并确认 `StreamingAssets/Playground` 下没有同名脚本，
    否则会冲突。
 
-5. **不要给 Mod 工作区加 `.asmdef`。** 被 asmdef 覆盖的脚本不会被打包进 Mod。
+6. **不要给 Mod 工作区加 `.asmdef`。** 被 asmdef 覆盖的脚本不会被打包进 Mod。
 
-6. **`.meta` 要提交。** 这个仓库是 Unity 工程的一部分，Unity 会为每个文件生成 `.meta`；
+7. **`.meta` 要提交。** 这个仓库是 Unity 工程的一部分，Unity 会为每个文件生成 `.meta`；
    首次在 Unity 里导入后请把生成的 `.meta` 一起提交，否则别人拉下来引用会错位。
 
-7. **命名空间不要起成 `...Plugin`。** `using Warudo.Core.Plugins` 里的 `Plugin` 基类会被
+8. **命名空间不要起成 `...Plugin`。** `using Warudo.Core.Plugins` 里的 `Plugin` 基类会被
    自己所在的命名空间遮蔽，报
    `CS0118: "Plugin" 是命名空间，但此处被当做类型来使用`。
-   本仓库用的是 `HoWarudoModTests.PluginMod`，就是为了避开这个坑。
+   本仓库用的是 `HoWarudoModTests.Plugins`，就是为了避开这个坑。
 
-8. **`[DataInput]` 字段名不要撞 `Node` 基类成员。** 例如 `Name` 会报
+9. **`[DataInput]` 字段名不要撞 `Node` 基类成员。** 例如 `Name` 会报
    `CS0108: HoTestGreetNode.Name 隐藏继承的成员 Node.Name`，
    数据输入请取业务名（本仓库用 `Who`），否则会遮蔽基类字段。
 
-9. **`.ps1` 要用纯 ASCII 或带 BOM。** Windows PowerShell 5.1 把无 BOM 的文件按 ANSI 读，
-   中文注释会直接把脚本读崩。`tools/compile-check.ps1` 因此写成全英文。
+10. **`.ps1` 要用纯 ASCII 或带 BOM。** Windows PowerShell 5.1 把无 BOM 的文件按 ANSI 读，
+    中文注释会直接把脚本读崩。`tools/*.ps1` 因此写成全英文。

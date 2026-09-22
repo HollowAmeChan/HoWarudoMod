@@ -7,7 +7,7 @@
 using Warudo.Core.Attributes;
 using Warudo.Core.Graphs;
 
-namespace HoWarudoModTests.PluginMod.Nodes.Sub
+namespace HoWarudoModTests.Plugins.Nodes.Sub
 {
     [NodeType(
         Id = "3c7b2e51-8a4d-4f6b-b1e9-2d5c8a0f4e22",

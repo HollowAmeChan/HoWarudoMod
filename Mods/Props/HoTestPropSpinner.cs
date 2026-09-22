@@ -6,7 +6,7 @@
 
 using UnityEngine;
 
-namespace HoWarudoModTests.Prop
+namespace HoWarudoModTests.Props
 {
     /// <summary>Minimal behaviour: spins the prop around its local Y axis.</summary>
     public class HoTestPropSpinner : MonoBehaviour

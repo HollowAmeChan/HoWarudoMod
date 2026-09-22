@@ -3,7 +3,7 @@
 // 存在的意义：证明 Mod 工作区里的每一个 .cs 都会被 UMod 编译进 Mod 程序集，
 // 而不是"只有挂在 Prefab 上的脚本才被打包"。
 
-namespace HoWarudoModTests.Prop
+namespace HoWarudoModTests.Props
 {
     public static class HoTestPropUtils
     {

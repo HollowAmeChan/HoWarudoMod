@@ -1,14 +1,27 @@
 // HoModTestBuilder.cs
 // =============================================================================
-// HoWarudoModTests 仓库的构建入口（Editor）。
+// HoWarudoModTests 的构建入口。
 //
-// 它做四件事：
-//   1) 生成道具 Mod 需要的根预制体  Mods/HoTestProp/Prop.prefab
-//   2) 配置 UMod 的两个导出工作区（Export Profile）：HoTestProp / HoTestPlugin
-//   3) 调用官方构建入口 UMod.BuildEngine.ModToolsUtil.StartBuild
-//   4) 自己解析产物 .warudo，报告包内条目 —— 这就是"最小打包验证"
+// 这个仓库是「Warudo 各类 Mod 的最小可参考实现」：
+//   Mods/Props                道具       入口 Prop.prefab
+//   Mods/Particles            粒子       入口 Particle.prefab
+//   Mods/Environments         环境       入口 Environment.unity
+//   Mods/CharacterAnimations  角色动画   入口 Animation.anim
+//   Mods/Plugins              插件       入口 [PluginType] 类
 //
-// 全部 UMod API 都通过反射访问：SDK 版本之间成员会变，这里不想因为签名变化编译失败。
+// 目录名就是 Warudo 数据目录里的目标目录名 —— 一个目录一个类别，一一对应。
+// ⚠️ 不能把多个类别的入口塞进同一个目录：一个 .warudo 只会被落点目录对应的
+//    那一个加载器认领，其余的静默不生效（不报错）。
+//
+// 菜单：
+//   1 生成各类别最小示例   补齐缺失的入口资产
+//   2 同步工作区           每个 Mods/<类别>/ 建一个同名 Export Profile
+//   3 构建全部             对每个工作区调 UMod 官方构建入口
+//   4 校验产物             自己解析 .warudo，报告包内条目
+//
+// batchmode：
+//   Unity.exe -batchmode -projectPath <工程> \
+//     -executeMethod HoWarudoModTests.EditorTools.HoModTestBuilder.RunAll -logFile <log>
 // =============================================================================
 
 using System;
@@ -20,15 +33,45 @@ using System.Text;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace HoWarudoModTests.EditorTools
 {
     public static class HoModTestBuilder
     {
         public const string RepoAssetRoot = "Assets/HoWarudoModTests";
-        public const string PropModAssetRoot = RepoAssetRoot + "/Mods/HoTestProp";
-        public const string PluginModAssetRoot = RepoAssetRoot + "/Mods/HoTestPlugin";
+        public const string ModsRoot = RepoAssetRoot + "/Mods";
         public const string OutputRoot = RepoAssetRoot + "/out";
+
+        private enum EntryKind
+        {
+            Prefab,
+            Scene,
+            AnimationClip,
+            Plugin,
+        }
+
+        private sealed class ModTemplate
+        {
+            public string folderName;     // Mods/<folderName>，同时也是 Warudo 数据目录名
+            public EntryKind entryKind;
+            public string entryAssetName; // 入口资产文件名（不含扩展名）；插件为空
+        }
+
+        private static readonly ModTemplate[] Templates =
+        {
+            new ModTemplate { folderName = "Props", entryKind = EntryKind.Prefab, entryAssetName = "Prop" },
+            new ModTemplate { folderName = "Particles", entryKind = EntryKind.Prefab, entryAssetName = "Particle" },
+            new ModTemplate { folderName = "Environments", entryKind = EntryKind.Scene, entryAssetName = "Environment" },
+            new ModTemplate { folderName = "CharacterAnimations", entryKind = EntryKind.AnimationClip,
+                entryAssetName = "Animation" },
+            new ModTemplate { folderName = "Plugins", entryKind = EntryKind.Plugin, entryAssetName = string.Empty },
+        };
+
+        private static readonly string[] WarudoModFolders =
+        {
+            "Characters", "CharacterAnimations", "Environments", "Props", "Particles", "Plugins",
+        };
 
         private static readonly List<string> Report = new List<string>();
 
@@ -39,118 +82,17 @@ namespace HoWarudoModTests.EditorTools
         }
 
         // ---------------------------------------------------------------------
-        // 菜单入口
-        // ---------------------------------------------------------------------
-
-        [MenuItem("HoWarudoModTests/1 - 生成 Prop 预制体", priority = 0)]
-        public static void CreatePropPrefab()
-        {
-            string folder = ToAbsolute(PropModAssetRoot);
-            Directory.CreateDirectory(folder);
-
-            EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
-
-            // 官方约定：道具 Mod 的根 Prefab 必须叫 Prop。
-            var root = new GameObject("Prop");
-            var body = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            body.name = "Body";
-            body.transform.SetParent(root.transform, false);
-            body.transform.localScale = new Vector3(0.3f, 0.3f, 0.3f);
-
-            // 挂上 Mod 工作区里的脚本 —— 这是"脚本是否真的进了 Mod 程序集"的验证点。
-            root.AddComponent<HoWarudoModTests.Prop.HoTestPropSpinner>();
-
-            string prefabPath = PropModAssetRoot + "/Prop.prefab";
-            var prefab = PrefabUtility.SaveAsPrefabAsset(root, prefabPath);
-            UnityEngine.Object.DestroyImmediate(root);
-            AssetDatabase.SaveAssets();
-
-            Debug.Log("[HoModTest] Prop 预制体 -> " + prefabPath + " (" + (prefab != null ? "OK" : "失败") + ")");
-        }
-
-        [MenuItem("HoWarudoModTests/2 - 配置导出工作区", priority = 1)]
-        public static void ConfigureProfiles()
-        {
-            var settings = GetOrCreateExportSettings();
-            if (settings == null) throw new InvalidOperationException("拿不到 UMod ExportSettings");
-
-            // 幂等：先清空再建，反复执行结果一致。
-            while ((int)GetMember(settings, "ExportProfileCount") > 0)
-            {
-                InvokeMember(settings, "DeleteExportProfile", new object[] { 0 });
-            }
-
-            AddProfile(settings, "HoTestProp", ToAbsolute(PropModAssetRoot), ToAbsolute(OutputRoot + "/Props"));
-            AddProfile(settings, "HoTestPlugin", ToAbsolute(PluginModAssetRoot), ToAbsolute(OutputRoot + "/Plugins"));
-
-            EditorUtility.SetDirty(settings);
-            AssetDatabase.SaveAssets();
-            Debug.Log("[HoModTest] 导出工作区已配置：HoTestProp -> out/Props，HoTestPlugin -> out/Plugins");
-        }
-
-        [MenuItem("HoWarudoModTests/3 - 构建全部 Mod", priority = 2)]
-        public static void BuildAll()
-        {
-            var settings = GetOrCreateExportSettings();
-            if (settings == null) throw new InvalidOperationException("拿不到 UMod ExportSettings");
-
-            EnsureEditorProjectFiles();
-
-            int count = (int)GetMember(settings, "ExportProfileCount");
-            for (int index = 0; index < count; index++)
-            {
-                InvokeMember(settings, "SetActiveExportProfile", new object[] { index });
-                object profile = GetMember(settings, "ActiveExportProfile");
-                string modName = (string)GetMember(profile, "ModName");
-                string exportPath = (string)GetMember(profile, "ModExportPath");
-                Directory.CreateDirectory(exportPath);
-
-                Debug.Log("[HoModTest] === 构建 " + modName + " -> " + exportPath);
-                object result = InvokeStartBuild(settings);
-                if (result == null) throw new InvalidOperationException(modName + "：StartBuild 返回 null");
-
-                bool ok = (bool)GetMember(result, "Successful");
-                var file = GetMember(result, "BuiltModFile") as FileInfo;
-                var error = GetMember(result, "ErrorMessage") as string;
-                Debug.Log("[HoModTest] " + modName + " successful=" + ok +
-                          " file=" + (file != null ? file.FullName : "(none)") +
-                          " error=" + (error ?? "(none)"));
-
-                if (!ok) throw new InvalidOperationException(modName + " 构建失败：" + error);
-            }
-        }
-
-        [MenuItem("HoWarudoModTests/4 - 校验产物 .warudo", priority = 3)]
-        public static void VerifyOutputs()
-        {
-            string outDir = ToAbsolute(OutputRoot);
-            if (!Directory.Exists(outDir))
-            {
-                Debug.LogWarning("[HoModTest] 还没有产物目录：" + outDir);
-                return;
-            }
-            foreach (string file in Directory.GetFiles(outDir, "*.warudo", SearchOption.AllDirectories))
-            {
-                Debug.Log(DescribePackage(file));
-            }
-        }
-
-        // ---------------------------------------------------------------------
         // batchmode 入口
         // ---------------------------------------------------------------------
 
-        /// <summary>
-        /// Unity.exe -batchmode -projectPath &lt;工程&gt; \
-        ///   -executeMethod HoWarudoModTests.EditorTools.HoModTestBuilder.RunAll -logFile &lt;log&gt;
-        /// </summary>
         public static void RunAll()
         {
             int exitCode = 1;
             Report.Clear();
             try
             {
-                CreatePropPrefab();
-                ConfigureProfiles();
+                Scaffold();
+                SyncWorkspaces();
                 AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
                 BuildAll();
                 VerifyOutputs();
@@ -165,9 +107,9 @@ namespace HoWarudoModTests.EditorTools
             {
                 try
                 {
-                    string outDir = ToAbsolute(OutputRoot);
-                    Directory.CreateDirectory(outDir);
-                    File.WriteAllText(Path.Combine(outDir, "build-report.txt"), string.Join("\n", Report));
+                    Directory.CreateDirectory(ToAbsolute(OutputRoot));
+                    File.WriteAllText(Path.Combine(ToAbsolute(OutputRoot), "build-report.txt"),
+                        string.Join("\n", Report));
                 }
                 catch (Exception writeException)
                 {
@@ -175,14 +117,341 @@ namespace HoWarudoModTests.EditorTools
                 }
             }
 
-            if (Application.isBatchMode) EditorApplication.Exit(exitCode);
+            if (Application.isBatchMode)
+                EditorApplication.Exit(exitCode);
         }
 
         // ---------------------------------------------------------------------
-        // .warudo 产物解析（12 字节 UMod 头 + 标准 ZIP）
+        // 1. 生成各类别最小示例
         // ---------------------------------------------------------------------
 
-        /// <summary>解析 .warudo 的 ZIP 中央目录，列出包内条目。</summary>
+        [MenuItem("HoWarudoModTests/1 - 生成各类别最小示例", priority = 0)]
+        public static void Scaffold()
+        {
+            foreach (ModTemplate template in Templates)
+            {
+                string folder = ModsRoot + "/" + template.folderName;
+                Directory.CreateDirectory(ToAbsolute(folder));
+
+                if (template.entryKind == EntryKind.Plugin)
+                {
+                    // 插件入口是源码，已经在仓库里，这里只确认存在。
+                    bool hasPlugin = Directory.GetFiles(ToAbsolute(folder), "*.cs", SearchOption.AllDirectories)
+                        .Any(LooksLikePlugin);
+                    Say((hasPlugin ? "OK   " : "缺少 ") + template.folderName + "：[PluginType] 源码");
+                    continue;
+                }
+
+                string entryPath = folder + "/" + template.entryAssetName + EntryExtension(template.entryKind);
+                if (File.Exists(ToAbsolute(entryPath)))
+                {
+                    Say("OK   " + template.folderName + "：入口已存在 " + template.entryAssetName);
+                    continue;
+                }
+
+                CreateEntryAsset(template, entryPath);
+                Say("新建 " + template.folderName + "：入口 " + template.entryAssetName);
+            }
+
+            AssetDatabase.SaveAssets();
+        }
+
+        private static string EntryExtension(EntryKind kind)
+        {
+            switch (kind)
+            {
+                case EntryKind.Prefab: return ".prefab";
+                case EntryKind.Scene: return ".unity";
+                case EntryKind.AnimationClip: return ".anim";
+                default: return string.Empty;
+            }
+        }
+
+        private static void CreateEntryAsset(ModTemplate template, string entryPath)
+        {
+            switch (template.entryKind)
+            {
+                case EntryKind.Prefab:
+                    CreateEntryPrefab(template, entryPath);
+                    break;
+                case EntryKind.Scene:
+                    CreateEntryScene(entryPath);
+                    break;
+                case EntryKind.AnimationClip:
+                    CreateEntryAnimationClip(entryPath);
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// 在预览场景里搭 Prefab，避免动到用户当前打开的场景。
+        /// Props 的根节点挂 Mod 工作区里的脚本 —— 这是"脚本有没有进 Mod 程序集"的验证点。
+        /// </summary>
+        private static void CreateEntryPrefab(ModTemplate template, string entryPath)
+        {
+            Scene preview = EditorSceneManager.NewPreviewScene();
+            GameObject root = null;
+            try
+            {
+                root = new GameObject(template.entryAssetName);
+                SceneManager.MoveGameObjectToScene(root, preview);
+
+                if (template.entryAssetName == "Particle")
+                {
+                    root.AddComponent<ParticleSystem>();
+                }
+                else
+                {
+                    GameObject body = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                    body.name = "Body";
+                    SceneManager.MoveGameObjectToScene(body, preview);
+                    body.transform.SetParent(root.transform, false);
+                    body.transform.localScale = new Vector3(0.3f, 0.3f, 0.3f);
+                    root.AddComponent<HoWarudoModTests.Props.HoTestPropSpinner>();
+                }
+
+                PrefabUtility.SaveAsPrefabAsset(root, entryPath);
+            }
+            finally
+            {
+                if (root != null)
+                    UnityEngine.Object.DestroyImmediate(root);
+                EditorSceneManager.ClosePreviewScene(preview);
+            }
+        }
+
+        /// <summary>
+        /// 环境入口是场景。用 additive 建、存完立刻关，不动用户当前打开的场景。
+        /// </summary>
+        private static void CreateEntryScene(string entryPath)
+        {
+            Scene scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Additive);
+            try
+            {
+                var settings = new GameObject("Environment Settings");
+                SceneManager.MoveGameObjectToScene(settings, scene);
+
+                // EnvironmentSettings 来自 Warudo.Plugins.Core，用反射挂上，避免硬依赖 SDK 类型。
+                Type settingsType = FindType("Warudo.Plugins.Core.Assets.Environment.EnvironmentSettings");
+                if (settingsType != null)
+                    settings.AddComponent(settingsType);
+                else
+                    Debug.LogWarning("[HoModTest] 没找到 EnvironmentSettings 类型，环境场景里没有挂它。");
+
+                EditorSceneManager.SaveScene(scene, entryPath);
+            }
+            finally
+            {
+                EditorSceneManager.CloseScene(scene, true);
+            }
+        }
+
+        /// <summary>角色动画入口是名为 Animation 的 AnimationClip。</summary>
+        private static void CreateEntryAnimationClip(string entryPath)
+        {
+            var clip = new AnimationClip { name = "Animation" };
+            // 放一条无害的曲线，让 clip 不是完全空的。
+            clip.SetCurve(string.Empty, typeof(Transform), "localPosition.x",
+                AnimationCurve.Linear(0f, 0f, 1f, 0f));
+            AssetDatabase.CreateAsset(clip, entryPath);
+        }
+
+        // ---------------------------------------------------------------------
+        // 2. 同步工作区：一目录一工作区
+        // ---------------------------------------------------------------------
+
+        [MenuItem("HoWarudoModTests/2 - 同步工作区（一目录一工作区）", priority = 1)]
+        public static void SyncWorkspaces()
+        {
+            var settings = GetOrCreateExportSettings();
+            if (settings == null)
+                throw new InvalidOperationException("拿不到 UMod ExportSettings，请先导入 Warudo Mod SDK。");
+
+            string dataRoot = ResolveWarudoDataRoot(settings);
+            if (string.IsNullOrEmpty(dataRoot))
+                throw new InvalidOperationException(
+                    "推不出 Warudo 数据目录。请先用官方窗口建一个工作区，把导出目录指到 " +
+                    "StreamingAssets 下的某个类别目录（例如 .../StreamingAssets/Characters）。");
+            Say("Warudo 数据目录：" + dataRoot);
+
+            foreach (ModTemplate template in Templates)
+            {
+                string folder = ModsRoot + "/" + template.folderName;
+                if (!AssetDatabase.IsValidFolder(folder))
+                {
+                    Say("跳过 " + template.folderName + "：目录不存在");
+                    continue;
+                }
+
+                string exportPath = dataRoot + "/" + template.folderName;
+                Directory.CreateDirectory(exportPath.Replace('/', Path.DirectorySeparatorChar));
+                UpsertProfile(settings, template.folderName, ToAbsolute(folder), exportPath);
+            }
+
+            EditorUtility.SetDirty(settings);
+            AssetDatabase.SaveAssets();
+            Say("工作区同步完成");
+        }
+
+        /// <summary>
+        /// 找到或创建「名称 + 资产目录」都匹配的工作区，写入当前配置，并设为活动工作区。
+        /// 已存在就更新，不重复创建，也不还原。
+        /// </summary>
+        private static void UpsertProfile(UnityEngine.Object settings, string modName, string assetFolder,
+            string exportPath)
+        {
+            var profiles = GetMember(settings, "ExportProfiles") as Array;
+            int index = -1;
+            if (profiles != null)
+            {
+                for (int i = 0; i < profiles.Length; i++)
+                {
+                    object candidate = profiles.GetValue(i);
+                    if (string.Equals(GetMember(candidate, "ModName") as string, modName, StringComparison.Ordinal) &&
+                        string.Equals(NormalizePath(GetMember(candidate, "ModAssetsPath") as string), assetFolder,
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        index = i;
+                        break;
+                    }
+                }
+            }
+
+            if (index < 0)
+            {
+                if (profiles != null && profiles.Cast<object>().Any(candidate =>
+                        string.Equals(GetMember(candidate, "ModName") as string, modName, StringComparison.Ordinal)))
+                {
+                    Say("!! 已有同名工作区「" + modName + "」但资产目录不同，跳过");
+                    return;
+                }
+
+                InvokeMember(settings, "CreateNewExportProfile", new object[] { true });
+                index = (int)GetMember(settings, "ActiveExportProfileIndex");
+                profiles = GetMember(settings, "ExportProfiles") as Array;
+                Say("  + 新建工作区 " + modName);
+            }
+            else
+            {
+                InvokeMember(settings, "SetActiveExportProfile", new object[] { index });
+                Say("  ~ 更新工作区 " + modName);
+            }
+
+            if (profiles == null || index < 0 || index >= profiles.Length)
+                throw new InvalidOperationException("定位工作区失败：" + modName);
+
+            object profile = profiles.GetValue(index);
+            SetMember(profile, "ModName", modName);
+            SetMember(profile, "ModAuthor", "Hollow");
+            SetMember(profile, "ModVersion", "1.0.0");
+            SetMember(profile, "ModDescription", "HoWarudoModTests 最小示例：" + modName);
+            SetMember(profile, "ModAssetsPath", assetFolder);
+            SetMember(profile, "ModExportPath", exportPath);
+        }
+
+        /// <summary>
+        /// 从任意一个已有工作区的导出目录反推 Warudo 数据目录：末段是已知类别目录就退一级。
+        /// </summary>
+        private static string ResolveWarudoDataRoot(UnityEngine.Object settings)
+        {
+            var profiles = GetMember(settings, "ExportProfiles") as Array;
+            if (profiles == null)
+                return string.Empty;
+
+            foreach (object profile in profiles)
+            {
+                string export = NormalizePath(GetMember(profile, "ModExportPath") as string);
+                if (string.IsNullOrEmpty(export))
+                    continue;
+
+                int lastSlash = export.LastIndexOf('/');
+                if (lastSlash < 0)
+                    continue;
+
+                string leaf = export.Substring(lastSlash + 1);
+                if (WarudoModFolders.Contains(leaf, StringComparer.OrdinalIgnoreCase))
+                    return export.Substring(0, lastSlash);
+            }
+
+            return string.Empty;
+        }
+
+        // ---------------------------------------------------------------------
+        // 3. 构建全部
+        // ---------------------------------------------------------------------
+
+        [MenuItem("HoWarudoModTests/3 - 构建全部", priority = 2)]
+        public static void BuildAll()
+        {
+            var settings = GetOrCreateExportSettings();
+            if (settings == null)
+                throw new InvalidOperationException("拿不到 UMod ExportSettings。");
+
+            EnsureEditorProjectFiles();
+
+            var profiles = GetMember(settings, "ExportProfiles") as Array;
+            if (profiles == null)
+                return;
+
+            string modsRootAbsolute = ToAbsolute(ModsRoot);
+            for (int index = 0; index < profiles.Length; index++)
+            {
+                object profile = profiles.GetValue(index);
+                var modName = GetMember(profile, "ModName") as string;
+                string assetPath = NormalizePath(GetMember(profile, "ModAssetsPath") as string);
+                if (!assetPath.StartsWith(modsRootAbsolute, StringComparison.OrdinalIgnoreCase))
+                    continue;   // 不是本仓库的工作区，不碰
+
+                var exportPath = GetMember(profile, "ModExportPath") as string;
+                Directory.CreateDirectory(exportPath);
+
+                InvokeMember(settings, "SetActiveExportProfile", new object[] { index });
+                Say("=== 构建 " + modName + " -> " + exportPath);
+
+                object result = InvokeStartBuild(settings);
+                if (result == null)
+                    throw new InvalidOperationException(modName + "：StartBuild 返回 null");
+
+                bool ok = GetMember(result, "Successful") is bool flag && flag;
+                var file = GetMember(result, "BuiltModFile") as FileInfo;
+                var error = GetMember(result, "ErrorMessage") as string;
+                Say("    successful=" + ok + " file=" + (file != null ? file.FullName : "(none)") +
+                    " error=" + (error ?? "(none)"));
+
+                if (!ok)
+                    throw new InvalidOperationException(modName + " 构建失败：" + error);
+            }
+        }
+
+        // ---------------------------------------------------------------------
+        // 4. 校验产物
+        // ---------------------------------------------------------------------
+
+        [MenuItem("HoWarudoModTests/4 - 校验产物 .warudo", priority = 3)]
+        public static void VerifyOutputs()
+        {
+            var settings = GetOrCreateExportSettings();
+            string dataRoot = settings == null ? string.Empty : ResolveWarudoDataRoot(settings);
+
+            var directories = new List<string> { ToAbsolute(OutputRoot) };
+            if (!string.IsNullOrEmpty(dataRoot))
+                directories.AddRange(WarudoModFolders.Select(folder => dataRoot + "/" + folder));
+
+            int found = 0;
+            foreach (string directory in directories.Where(Directory.Exists).Distinct())
+            {
+                foreach (string file in Directory.GetFiles(directory, "*.warudo", SearchOption.TopDirectoryOnly))
+                {
+                    Say(DescribePackage(file));
+                    found++;
+                }
+            }
+
+            if (found == 0)
+                Say("没有找到任何 .warudo 产物。");
+        }
+
+        /// <summary>解析 .warudo（12 字节 UMOD 头 + 标准 ZIP），列出包内条目。</summary>
         public static string DescribePackage(string path)
         {
             var sb = new StringBuilder();
@@ -228,7 +497,8 @@ namespace HoWarudoModTests.EditorTools
             for (int entry = 0; entry < total; entry++)
             {
                 if (pos + 46 > bytes.Length) break;
-                if (!(bytes[pos] == 0x50 && bytes[pos + 1] == 0x4B && bytes[pos + 2] == 0x01 && bytes[pos + 3] == 0x02)) break;
+                if (!(bytes[pos] == 0x50 && bytes[pos + 1] == 0x4B && bytes[pos + 2] == 0x01 &&
+                      bytes[pos + 3] == 0x02)) break;
                 uint size = BitConverter.ToUInt32(bytes, pos + 24);
                 ushort nameLength = BitConverter.ToUInt16(bytes, pos + 28);
                 ushort extraLength = BitConverter.ToUInt16(bytes, pos + 30);
@@ -260,14 +530,12 @@ namespace HoWarudoModTests.EditorTools
         {
             Type settingsType = FindType("UMod.ModTools.Export.ExportSettings");
             if (settingsType == null)
-            {
-                Debug.LogError("[HoModTest] 没找到 UMod.ModTools.Export.ExportSettings —— Warudo Mod SDK 没导入？");
                 return null;
-            }
 
             UnityEngine.Object settings = null;
             PropertyInfo active = FindStaticProperty(settingsType, "Active");
-            if (active != null) settings = active.GetValue(null) as UnityEngine.Object;
+            if (active != null)
+                settings = active.GetValue(null) as UnityEngine.Object;
 
             if (settings == null)
             {
@@ -282,40 +550,25 @@ namespace HoWarudoModTests.EditorTools
 
             if (settings == null)
             {
-                string dir = ToAbsolute(RepoAssetRoot) + "/ExportSettings";
-                Directory.CreateDirectory(dir);
+                Directory.CreateDirectory(ToAbsolute(RepoAssetRoot) + "/ExportSettings");
                 settings = ScriptableObject.CreateInstance(settingsType);
                 settings.name = "ExportSettings";
                 AssetDatabase.CreateAsset(settings, RepoAssetRoot + "/ExportSettings/ExportSettings.asset");
                 AssetDatabase.SaveAssets();
-                Debug.Log("[HoModTest] 新建了 ExportSettings 资源");
             }
 
             MethodInfo load = settingsType.GetMethod("Load", BindingFlags.Public | BindingFlags.Instance);
-            if (load != null && load.GetParameters().Length == 0) load.Invoke(settings, null);
+            if (load != null && load.GetParameters().Length == 0)
+                load.Invoke(settings, null);
 
             return settings;
-        }
-
-        private static void AddProfile(UnityEngine.Object settings, string modName, string assetsPath, string exportPath)
-        {
-            MethodInfo create = settings.GetType().GetMethod("CreateNewExportProfile", new[] { typeof(bool) });
-            if (create == null) throw new MissingMethodException("ExportSettings.CreateNewExportProfile(bool) 不存在");
-
-            object profile = create.Invoke(settings, new object[] { true });
-            SetMember(profile, "ModName", modName);
-            SetMember(profile, "ModAuthor", "Hollow");
-            SetMember(profile, "ModVersion", "1.0.0");
-            SetMember(profile, "ModDescription", "Warudo mod packaging test (" + modName + ").");
-            SetMember(profile, "ModAssetsPath", assetsPath);
-            SetMember(profile, "ModExportPath", exportPath);
-            Debug.Log("[HoModTest]   + 工作区 " + modName + "  assets=" + assetsPath);
         }
 
         private static object InvokeStartBuild(UnityEngine.Object settings)
         {
             Type toolsType = FindType("UMod.BuildEngine.ModToolsUtil");
-            if (toolsType == null) throw new InvalidOperationException("没找到 UMod.BuildEngine.ModToolsUtil");
+            if (toolsType == null)
+                throw new InvalidOperationException("没找到 UMod.BuildEngine.ModToolsUtil");
 
             MethodInfo method = toolsType
                 .GetMethods(BindingFlags.Public | BindingFlags.Static)
@@ -331,14 +584,17 @@ namespace HoWarudoModTests.EditorTools
                 .OrderBy(candidate => candidate.GetParameters().Length)
                 .FirstOrDefault();
 
-            if (method == null) throw new MissingMethodException("没有兼容的 ModToolsUtil.StartBuild(ExportSettings)");
+            if (method == null)
+                throw new MissingMethodException("没有兼容的 ModToolsUtil.StartBuild(ExportSettings)");
 
             ParameterInfo[] methodParameters = method.GetParameters();
             object[] arguments = new object[methodParameters.Length];
             arguments[0] = settings;
             for (int index = 1; index < arguments.Length; index++)
             {
-                arguments[index] = methodParameters[index].HasDefaultValue ? methodParameters[index].DefaultValue : null;
+                arguments[index] = methodParameters[index].HasDefaultValue
+                    ? methodParameters[index].DefaultValue
+                    : null;
             }
 
             try { return method.Invoke(null, arguments); }
@@ -346,15 +602,14 @@ namespace HoWarudoModTests.EditorTools
         }
 
         /// <summary>
-        /// UMod 是靠 Unity 生成的 .csproj 里的 &lt;Compile Include="Assets\..."&gt; 决定编译哪些脚本的。
-        /// 工程根目录没有 .csproj 时，脚本会被整段跳过，产物里不会有 assemblymodules.dat。
+        /// UMod 是靠 Unity 生成的 .csproj 里的 &lt;Compile Include="Assets\..."&gt; 决定编译哪些脚本的，
+        /// batchmode 不会自动生成，这里补一次。
         /// </summary>
         private static void EnsureEditorProjectFiles()
         {
-            string projectRoot = Directory.GetParent(Application.dataPath).FullName;
-            string[] before = SafeGetProjectFiles(projectRoot);
-            Debug.Log("[HoModTest] 构建前 .csproj 数量：" + before.Length);
-            if (before.Length > 0) return;
+            string projectRoot = Path.GetDirectoryName(Application.dataPath);
+            if (SafeGetProjectFiles(projectRoot).Length > 0)
+                return;
 
             string[] syncTypes = { "UnityEditor.CodeEditorProjectSync", "UnityEditor.SyncVS" };
             string[] syncMethods = { "SyncEditorProject", "SyncSolution" };
@@ -364,24 +619,27 @@ namespace HoWarudoModTests.EditorTools
                 if (type == null) continue;
                 foreach (string methodName in syncMethods)
                 {
-                    foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
-                                                 .Where(m => m.Name == methodName))
+                    foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic |
+                                                           BindingFlags.Static)
+                                               .Where(m => m.Name == methodName))
                     {
                         if (method.GetParameters().Length > 1) continue;
                         try
                         {
                             method.Invoke(null, method.GetParameters().Length == 0 ? null : new object[] { null });
-                            Debug.Log("[HoModTest] 已调用 " + typeName + "." + methodName + "()");
+                            Say("已调用 " + typeName + "." + methodName + "()");
                         }
                         catch (Exception exception)
                         {
-                            Debug.LogWarning("[HoModTest] " + typeName + "." + methodName + " 异常：" + exception.Message);
+                            Debug.LogWarning("[HoModTest] " + typeName + "." + methodName + " 异常：" +
+                                             exception.Message);
                         }
                     }
                 }
             }
+
             AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
-            Debug.Log("[HoModTest] 构建后 .csproj 数量：" + SafeGetProjectFiles(projectRoot).Length);
+            Say("工程根目录 .csproj 数量：" + SafeGetProjectFiles(projectRoot).Length);
         }
 
         private static string[] SafeGetProjectFiles(string projectRoot)
@@ -394,10 +652,28 @@ namespace HoWarudoModTests.EditorTools
         // 小工具
         // ---------------------------------------------------------------------
 
+        private static bool LooksLikePlugin(string assetPath)
+        {
+            try
+            {
+                string absolute = Path.GetFullPath(assetPath);
+                return File.Exists(absolute) && File.ReadAllText(absolute).Contains("[PluginType");
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
         private static string ToAbsolute(string assetPath)
         {
-            string projectRoot = Directory.GetParent(Application.dataPath).FullName;
+            string projectRoot = Path.GetDirectoryName(Application.dataPath);
             return Path.GetFullPath(Path.Combine(projectRoot, assetPath)).Replace('\\', '/');
+        }
+
+        private static string NormalizePath(string path)
+        {
+            return (path ?? string.Empty).Replace('\\', '/').TrimEnd('/');
         }
 
         private static Type FindType(string fullName)
@@ -425,13 +701,12 @@ namespace HoWarudoModTests.EditorTools
 
         private static object GetMember(object target, string name)
         {
-            if (target == null) throw new ArgumentNullException("target");
+            if (target == null) return null;
             Type type = target.GetType();
             PropertyInfo property = type.GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
             if (property != null) return property.GetValue(target);
             FieldInfo field = type.GetField(name, BindingFlags.Public | BindingFlags.Instance);
-            if (field != null) return field.GetValue(target);
-            throw new MissingMemberException(type.FullName, name);
+            return field?.GetValue(target);
         }
 
         private static void SetMember(object target, string name, object value)
