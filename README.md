@@ -5,9 +5,24 @@ Warudo **各类 Mod 的最小可参考实现**。
 放在 `BreakWarudo/Assets/HoWarudoModTests/` 下，是一个独立的 git 仓库，可以单独推到 GitHub。
 
 **核心规则：一个目录一个类别。** 目录名就是 Warudo 数据目录里的目标目录名，
-`HoModTestBuilder` 会给每个目录自动建一个同名工作区（Export Profile），一一对应。
+五个工作区（`Props` / `Particles` / `Environments` / `CharacterAnimations` / `Plugins`）
+已经配在 `Assets/ExportSettings.asset` 里，一一对应。
 
-做新 Mod 时照抄对应目录即可。
+做新 Mod 时照抄对应目录即可（每个目录里都有一份该类别的构建规范）。
+
+> ## ⚠️ 文档标记约定
+>
+> 这些文档区分三类信息，请按标记采信：
+>
+> | 标记 | 含义 |
+> |---|---|
+> | ✅ | **本机实测**——有产物字节、日志或亲眼看到的 UI 作依据 |
+> | 📖 | **官方文档所述**——来自 docs.warudo.app，**本机没有实测** |
+> | ❓ | **未验证**——我的推断，**可能是错的** |
+>
+> 最典型的一条教训：角色动画的入口位置我原本写成"Source 下拉"，实际是**带搜索框的
+> 卡片选择器**——那是 ❓ 被我当成了 ✅。所以 **Props / Particles / Environments 三类的
+> UI 入口位置至今仍是 ❓**，需要实机确认。
 
 ---
 
