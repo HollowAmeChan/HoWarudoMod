@@ -75,46 +75,53 @@ HoWarudoModTests/
 
 ## 怎么用
 
-### 图形界面
+入口资产与工作区**都已经配好了**，这个仓库本身不再带任何编辑器脚本 —— 直接用 FastBuild 构建。
 
-| 菜单 | 作用 |
-|---|---|
-| `HoWarudoModTests/1 - 生成各类别最小示例` | 给每个类别目录补齐缺失的入口资产（已存在就跳过） |
-| `HoWarudoModTests/2 - 同步工作区（一目录一工作区）` | 每个 `Mods/<类别>/` 建/更新一个同名 Export Profile，导出目录指向 Warudo 数据目录下的对应子目录 |
-| `HoWarudoModTests/3 - 构建全部` | 只构建资产目录在 `Mods/` 下的工作区，逐个调官方构建入口 |
-| `HoWarudoModTests/4 - 校验产物 .warudo` | 解析产物，打印包内条目与关键判定 |
+### 图形界面（真实路径）
 
-做新 Mod 的流程：复制一个类别目录 → 改名/改内容 → 点 2、3、4。
+窗口：`HoUnityTools → FastBuildWarudoMod` → 切到 **「其他 Mod」** 页。
 
-### 命令行（batchmode）
+对 `Mods/` 下的每一个类别目录各做一次：
 
-```powershell
-Start-Process -FilePath "D:\Unity\Unity 2021.3.45f2\Editor\Unity.exe" -Wait -PassThru -ArgumentList @(
-  '-batchmode',
-  '-projectPath', 'D:\Unity_Project\BreakWarudo',
-  '-executeMethod', 'HoWarudoModTests.EditorTools.HoModTestBuilder.RunAll',
-  '-logFile', 'D:\Unity_Project\BreakWarudo\Assets\HoWarudoModTests\out\build.log'
-)
-```
+1. 把 `Mods/<类别>/` 拖进 **「Mod 资产目录」**
+2. 类型会自动识别（`Prop.prefab` → 道具、`[PluginType]` → 插件…）
+3. 名称跟随目录名
+4. 点 **「构建 Warudo Mod」**
 
-`RunAll` = 1 → 2 → 3 → 4，报告写到 `out/build-report.txt`，退出码 0 表示全部成功。
+五个工作区（`Props` / `Particles` / `Environments` / `CharacterAnimations` / `Plugins`）
+已经写在 `Assets/ExportSettings.asset` 里，导出目录直接指向 Warudo 数据目录下的对应子目录，
+所以在同一页的 **「Warudo 工作区」** 面板里也能直接切。
 
-> `Unity.exe` 是 GUI 程序，PowerShell 里用 `&` 调用**不会等待**，要等它结束必须用
-> `Start-Process -Wait`。
+做新 Mod 的流程：复制一个类别目录 → 改名/改内容 → 在 FastBuild 里构建。
 
 ### 不启动 Unity 的编译自检（秒级）
 
 ```powershell
-powershell -File tools\compile-check.ps1          # 只编译 Mods/**/*.cs
-powershell -File tools\compile-check-editor.ps1   # 编译 Editor/ + Mods/
+powershell -File tools\compile-check.ps1
 ```
 
-分别对着**真机 Warudo DLL** 和 **UnityEditor + UMod SDK** 编译。
-命名空间遮蔽、字段撞基类这类错误几秒就能发现，不用等编辑器导入。
-换路径用 `-ManagedDir` / `-CscPath` 等参数。
+对着**真机 Warudo DLL** 编译 `Mods/**/*.cs`。命名空间遮蔽、字段撞基类这类错误几秒就能发现，
+不用等编辑器导入。换路径用 `-ManagedDir` / `-CscPath`。
 
 编译产物写在 `.compile-check/` —— **Unity 会忽略任何以 `.` 开头的目录**，
 所以产出的 DLL 不会被 Unity 当成插件导入。
+
+### 怎么看 Warudo 认没认
+
+Warudo 把加载过程写在 `%USERPROFILE%\AppData\LocalLow\HakuyaLabs\Warudo\Logs\*.log.gz`。
+
+**只有 Plugins 与 Characters 会写 `Load mod: <名字>`**；Props / Particles / Environments /
+CharacterAnimations 只会写一行 `Started monitoring <目录>`，**不记具体文件** ——
+那几类必须进 Warudo 在对应下拉里看：
+
+| 包 | 在 Warudo 里看哪里 |
+|---|---|
+| `Plugins` | `Blueprints` → 节点面板 → 分类 **`HoWarudoModTests`**（`Ho Test Greet` / `Ho Test Add`） |
+| `Props` | `Assets` → `+` → **Prop** → 该资产的 **Source** 下拉选 `Props` |
+| `Particles` | 粒子节点（`Spawn Particle` 等）的下拉 |
+| `Environments` | Environment 资产的 **Source** 下拉；切过去会看到一个立方体标记物 |
+| `CharacterAnimations` | 角色的**动画来源**下拉 |
+
 
 ---
 
