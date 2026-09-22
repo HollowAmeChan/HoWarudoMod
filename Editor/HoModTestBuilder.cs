@@ -238,6 +238,22 @@ namespace HoWarudoModTests.EditorTools
                 else
                     Debug.LogWarning("[HoModTest] 没找到 EnvironmentSettings 类型，环境场景里没有挂它。");
 
+                // 放一个一眼能认出来的标记物：切到这个环境时立刻能看出"环境换掉了"。
+                // 没有它的话空场景切过去和没切一样，没法确认加载成功。
+                var marker = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                marker.name = "HoWarudoModTests Marker";
+                SceneManager.MoveGameObjectToScene(marker, scene);
+                marker.transform.position = new Vector3(0f, 1.5f, 2f);
+                marker.transform.localScale = new Vector3(0.6f, 0.6f, 0.6f);
+                marker.transform.Rotate(0f, 30f, 0f, Space.Self);
+
+                var light = new GameObject("HoWarudoModTests Light");
+                SceneManager.MoveGameObjectToScene(light, scene);
+                var lightComponent = light.AddComponent<Light>();
+                lightComponent.type = LightType.Directional;
+                lightComponent.intensity = 1.2f;
+                light.transform.rotation = Quaternion.Euler(50f, -30f, 0f);
+
                 EditorSceneManager.SaveScene(scene, entryPath);
             }
             finally
@@ -450,6 +466,100 @@ namespace HoWarudoModTests.EditorTools
 
             if (found == 0)
                 Say("没有找到任何 .warudo 产物。");
+        }
+
+        /// <summary>
+        /// 读 Warudo 的日志，确认它到底认没认这些包。
+        ///
+        /// 说实话：日志只记录 Plugins 与 Characters 的加载（走 ModHost / PluginMonitor）。
+        /// Props / Particles / Environments / CharacterAnimations 只会写一行
+        /// "Started monitoring &lt;目录&gt;"，不记具体文件 —— 那几类只能进 Warudo 在对应下拉里看。
+        /// 但对插件包这条是硬证据，而且能抓到"加载失败"（例如运行时安全审查）。
+        /// </summary>
+        [MenuItem("HoWarudoModTests/5 - 检查 Warudo 日志（认没认）", priority = 4)]
+        public static void CheckWarudoLog()
+        {
+            string logDirectory = Path.GetFullPath(Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "..", "LocalLow", "HakuyaLabs", "Warudo", "Logs"));
+
+            if (!Directory.Exists(logDirectory))
+            {
+                Debug.LogWarning("[HoModTest] 找不到 Warudo 日志目录：" + logDirectory);
+                return;
+            }
+
+            string newest = Directory.GetFiles(logDirectory, "*.log.gz", SearchOption.TopDirectoryOnly)
+                .OrderByDescending(File.GetLastWriteTimeUtc)
+                .FirstOrDefault();
+            if (string.IsNullOrEmpty(newest))
+            {
+                Debug.LogWarning("[HoModTest] 日志目录里没有 *.log.gz：" + logDirectory);
+                return;
+            }
+
+            string[] lines;
+            using (var file = File.OpenRead(newest))
+            using (var gzip = new System.IO.Compression.GZipStream(file,
+                       System.IO.Compression.CompressionMode.Decompress))
+            using (var reader = new StreamReader(gzip))
+            {
+                lines = reader.ReadToEnd().Split('\n');
+            }
+
+            var sb = new StringBuilder();
+            sb.AppendLine("Warudo 日志：" + newest);
+            sb.AppendLine("最后写入：" + File.GetLastWriteTime(newest).ToString("yyyy-MM-dd HH:mm:ss"));
+            sb.AppendLine();
+            sb.AppendLine("说明：日志只记录 Plugins / Characters 的加载过程；");
+            sb.AppendLine("      Props/Particles/Environments/CharacterAnimations 只在启动时写一行");
+            sb.AppendLine("      \"Started monitoring <目录>\"，不记具体文件 —— 那几类要进 Warudo 在对应下拉里看。");
+            sb.AppendLine();
+
+            foreach (ModTemplate template in Templates)
+            {
+                sb.AppendLine("=== " + template.folderName + "  (" + template.entryKind + ")");
+
+                string artifactName = template.folderName + ".warudo";
+                var related = lines
+                    .Where(line => line.IndexOf(artifactName, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                   line.IndexOf("Load mod:  " + template.folderName, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                   line.IndexOf("Started monitoring " + template.folderName + " ",
+                                       StringComparison.OrdinalIgnoreCase) >= 0)
+                    .Select(line => line.Trim())
+                    .Distinct()
+                    .ToArray();
+
+                if (related.Length == 0)
+                    sb.AppendLine("    日志里没有它的记录。资源类 Mod 正常如此；若是 Plugins，说明 Warudo 还没扫到这个包。");
+                else
+                    foreach (string line in related)
+                        sb.AppendLine("    " + line);
+
+                sb.AppendLine();
+            }
+
+            // 全局扫一遍失败记录：可能是我们的包，也可能是别人的。
+            var failures = lines
+                .Where(line => line.IndexOf("Failed to load", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                               line.IndexOf("has failed code security verification", StringComparison.OrdinalIgnoreCase) >= 0)
+                .Select(line => line.Trim())
+                .Distinct()
+                .ToArray();
+
+            if (failures.Length > 0)
+            {
+                sb.AppendLine("=== 日志里出现的加载失败 ===");
+                foreach (string line in failures)
+                    sb.AppendLine("    " + line);
+            }
+
+            string report = sb.ToString();
+            Debug.Log("[HoModTest] Warudo 日志检查\n" + report);
+
+            string outDir = ToAbsolute(OutputRoot);
+            Directory.CreateDirectory(outDir);
+            File.WriteAllText(Path.Combine(outDir, "warudo-log-check.txt"), report);
         }
 
         /// <summary>解析 .warudo（12 字节 UMOD 头 + 标准 ZIP），列出包内条目。</summary>
