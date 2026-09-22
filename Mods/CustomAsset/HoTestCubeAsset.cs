@@ -43,13 +43,35 @@ namespace HoWarudoModTests.CustomAsset
         Category = "CATEGORY_DEBUG")]
     public class HoTestCubeAsset : GameObjectAsset
     {
-        // 状态文字。给用户/我们一个「这个资源确实活着」的可读标志。
+        // 诊断用状态文字。同时暴露 active 状态和帧计数，一眼定性：
+        //   frames 一直涨 -> OnUpdate() 在跑
+        //   frames 不动   -> OnUpdate() 压根没被调用（资源没 active）
         [Markdown]
-        public string Status = "Ho Test Cube is running.";
+        public string Status = "starting...";
+
+        private int _frames;
 
         // 每秒自转角度。设成 0 就静止。
         [DataInput]
         public float SpinSpeed = 90f;
+
+        // ⚠️ 必须是 protected override，不能写 public override。
+        //    官方文档示例写的是 `public override void OnCreate()`，但那只对直接继承
+        //    `Asset` 成立；`GameObjectAsset` 把它收窄成了 protected，
+        //    照抄文档会报 CS0507「重写 protected 继承成员时无法更改访问修饰符」。
+        //    （这条是本地 Roslyn 编译实测出来的，文档没说。）
+        //
+        // 📖 官方文档原话：资源创建后**默认不是 active 的**（"By default, assets are
+        // NOT active when they are created"），官方给的写法就是在 OnCreate 里显式置位。
+        //
+        // 实测动机：不加这一句时，立方体静止不动，只有在编辑器里手动拖它时才会转
+        // —— 说明未 active 的资源不会被每帧驱动。
+        protected override void OnCreate()
+        {
+            base.OnCreate();
+            SetActive(true);
+            Status = "active=" + Active;
+        }
 
         // 触发器：资源面板上的一个按钮。点一下把角度归零。
         [Trigger]
@@ -82,6 +104,13 @@ namespace HoWarudoModTests.CustomAsset
                 return;
             }
             GameObject.transform.Rotate(Vector3.up, SpinSpeed * Time.deltaTime, Space.Self);
+
+            _frames++;
+            if (_frames % 30 == 0)
+            {
+                Status = $"active={Active}  frames={_frames}  rotY={GameObject.transform.eulerAngles.y:F0}";
+                BroadcastDataInput(nameof(Status));
+            }
         }
     }
 }

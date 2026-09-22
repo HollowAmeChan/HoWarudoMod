@@ -90,7 +90,7 @@ public class HelloWorldAsset : Asset { }
 | 文件 | 作用 |
 |---|---|
 | `HoTestAssetPlugin.cs` | `[PluginType]` 入口，`AssetTypes = new[] { typeof(HoTestCubeAsset) }` |
-| `HoTestCubeAsset.cs` | `[AssetType]` 本体，继承 `GameObjectAsset`，造一个每帧自转的立方体 |
+| `HoTestCubeAsset.cs` | `[AssetType]` 本体，继承 `GameObjectAsset`，造一个每帧自转的立方体；`OnCreate` 里 `SetActive(true)`，`Status` 实时显示 active 状态与帧计数 |
 
 ✅ **两份 `.cs` 都用 Roslyn 对着真实 Warudo 0.15.0 程序集编译通过**
 （脚本：`.warudo-mod-research/.tools/compile-check-mod.ps1`，引用 `<游戏>/Warudo_Data/Managed`）。
@@ -127,20 +127,78 @@ public class HelloWorldAsset : Asset { }
 1. 把 `CustomAsset.warudo` 构建进 `StreamingAssets/Plugins`
 2. 重启 Warudo（插件类 Mod 只在启动时加载）
 3. **资源 → 添加资源 → `CATEGORY_DEBUG` 分组** → 应该能看到 `Ho Test Cube`
-4. 添加它 → 场景里出现一个**每帧自转**的小立方体
+4. 添加它 → 场景里出现一个小的立方体，**应当持续自转**（不碰它也在转）
 5. 选中它 → 面板上应有 `Transform`、`Status`、`SpinSpeed` 三个数据输入
    和一个 `ResetRotation` 触发器按钮；点按钮立方体转正
+6. 重点看 `Status`：应当是 `active=True  frames=<一直涨>  rotY=<一直变>`
 
 > 为什么用「每帧自转」当验收标志：静止的立方体分不清是资源活着还是场景里本来就有东西，
-> 转起来就说明 `OnUpdate()` 真的在跑。
+> 转起来就说明 `OnUpdate()` 真的在跑。`frames` 计数是第二道防线 ——
+> 就算看起来没转，`frames` 涨不涨也能直接区分「没跑」和「跑了但被覆盖了」。
 
-## 未验证项（别当成结论）
+## ✅ 实测发现：资源**必须**自己 `SetActive(true)`，否则不会被每帧驱动
 
-- ❓ `GameObjectAsset` 不调 `SetActive(true)` 时立方体到底出不出来
-  —— 官方示例也没调，我按官方示例写的。如果看不到，第一步就是试着在 `OnCreate` 里加 `SetActive(true)`
+第一次构建后你看到的**症状**：
+
+> 立方体在场景里能看到，但**静止不动**，只有在编辑器里**手动拖它**的时候才会转。
+
+✅ 这是**本机实测**到的现象。原因是 📖 官方文档写的那条默认行为：
+
+> By default, assets are **NOT** active when they are created.
+> You can set the active state of an asset by calling `SetActive(bool state)`.
+> 官方给的写法就是在 `OnCreate` 里 `SetActive(true)`。
+
+也就是说：**资源创建出来默认是「未就绪」状态，Warudo 不会每帧去驱动它**，
+`OnUpdate()` 自然也不跑。修法就是照官方文档在 `OnCreate` 里显式置位（本目录已加上）：
+
+```csharp
+protected override void OnCreate()
+{
+    base.OnCreate();
+    SetActive(true);
+}
+```
+
+为了能一眼定性，本目录的 `Status` 字段现在会实时显示：
+
+```
+active=True  frames=1230  rotY=214
+```
+
+- `frames` 一直涨 → `OnUpdate()` 真的在跑
+- `frames` 不动 → `OnUpdate()` 压根没被调用（资源没 active）
+
+❓ **是否彻底解决，等你这一轮复验**。如果加了 `SetActive(true)` 还是只有在拖动时才转，
+那说明成因不在 active 状态，得换方向查（下一个怀疑对象是 `GameObjectAsset` 的
+`OnLateUpdate` / `BroadcastTransformOptimized` 会用数据输入里的 Transform 覆盖 GameObject 的 transform）。
+
+## ⚠️ 踩坑：官方文档的 `OnCreate` 签名对 `GameObjectAsset` 是错的
+
+📖 官方 Assets 文档的示例写的是：
+
+```csharp
+public override void OnCreate() { ... }   // ← 照抄到 GameObjectAsset 上编译不过
+```
+
+❌ 继承 `GameObjectAsset` 时这样写会报：
+
+```
+error CS0507: 当重写"protected"继承成员"GameObjectAsset.OnCreate()"时，无法更改访问修饰符
+```
+
+✅ 正确写法是 **`protected override void OnCreate()`**（本目录实测）。
+文档那个 `public` 只对**直接继承 `Asset`** 成立（那一条未验证）。
+这是 `.warudo-mod-research/.tools/compile-check-mod.ps1` 本地编译检查抓出来的 ——
+**光看文档看不出来**。
+
+## 其余未验证项（别当成结论）
+
 - ❓ `[Markdown]` 字段在资源面板上的实际显示效果
 - ❓ 资源实例的序列化：改过的参数会不会存进场景、重启后还在不在
 - ❓ `sharedassets.*` 到底生不生成（见上表）
+- ❓ 资源是不是「被选中才激活」——你描述的「手动拖它才转」有没有可能是选中触发的，
+  和 active 状态是两回事。加了 `SetActive(true)` 之后如果**常态就转**，
+  就说明这条不成立
 
 ## 未来要做的事：自定义面捕追踪器
 
