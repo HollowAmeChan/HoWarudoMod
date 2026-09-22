@@ -136,41 +136,78 @@ public class HelloWorldAsset : Asset { }
 > 转起来就说明 `OnUpdate()` 真的在跑。`frames` 计数是第二道防线 ——
 > 就算看起来没转，`frames` 涨不涨也能直接区分「没跑」和「跑了但被覆盖了」。
 
-## ✅ 实测发现：资源**必须**自己 `SetActive(true)`，否则不会被每帧驱动
+## ★ 实测定论：`GameObjectAsset` 的 transform 归**数据输入**所有
 
-第一次构建后你看到的**症状**：
+这一节是本目录最有价值的东西 —— 踩了两轮坑，靠帧计数 + 元数据转储定出来的。
 
-> 立方体在场景里能看到，但**静止不动**，只有在编辑器里**手动拖它**的时候才会转。
+### 症状（✅ 你实测）
 
-✅ 这是**本机实测**到的现象。原因是 📖 官方文档写的那条默认行为：
+> 立方体在场景里能看到，但**平时静止**，只有在编辑器里**手动拖动**的时候才会转。
 
-> By default, assets are **NOT** active when they are created.
-> You can set the active state of an asset by calling `SetActive(bool state)`.
-> 官方给的写法就是在 `OnCreate` 里 `SetActive(true)`。
+### 定位过程
 
-也就是说：**资源创建出来默认是「未就绪」状态，Warudo 不会每帧去驱动它**，
-`OnUpdate()` 自然也不跑。修法就是照官方文档在 `OnCreate` 里显式置位（本目录已加上）：
+1. 先在 `OnUpdate()` 里加了个帧计数显示到 `Status` 上 → **`frames` 一直在涨**
+   → ✅ 说明 `OnUpdate()` 每帧都在跑，`Rotate()` 也确实执行了
+2. 那「不转」就只剩一种解释：**转完当场被覆盖回去**
+3. 用元数据转储查 `GameObjectAsset` 的公开字段，答案直接写在那儿：
+
+```
+[type] Warudo.Plugins.Core.Assets.GameObjectAsset : Warudo.Core.Scenes.Asset
+    $bool                                  Enabled      [DataInput]
+    $Warudo.Core.Data.Models.TransformData Transform    [DataInput]
+
+[type] Warudo.Core.Data.Models.TransformData : Warudo.Core.Data.StructuredData
+    $UnityEngine.Vector3 Position   [DataInput]
+    $UnityEngine.Vector3 Rotation   [DataInput]   ← 欧拉角，单位是度
+    $UnityEngine.Vector3 Scale      [DataInput]
+    .UnityEngine.Quaternion get_RotationQuaternion() / set_RotationQuaternion(...)
+    .void ApplyAsLocalTransform(UnityEngine.Transform)
+    .void CopyFromLocalTransform(UnityEngine.Transform)
+    .void ApplyAsWorldTransform(UnityEngine.Transform)
+    .void CopyFromWorldTransform(UnityEngine.Transform)
+```
+
+`GameObjectAsset` **每帧都拿 `Transform` 这个数据输入回写 GameObject 的 transform**。
+所以 `GameObject.transform.Rotate(...)` 写完，同一帧就被数据输入里的旧值盖掉了。
+平时看不出来；一旦你在编辑器里拖动它，交互期间那条回写让位，旋转才露出来 ——
+于是症状就成了「只有拖动时才转」。
+
+### 正确写法
+
+**旋转要写进资源自己的 `Transform` 数据输入，不要直接转 GameObject：**
 
 ```csharp
-protected override void OnCreate()
-{
-    base.OnCreate();
-    SetActive(true);
-}
+// ❌ 会被每帧覆盖
+GameObject.transform.Rotate(Vector3.up, spin * Time.deltaTime, Space.Self);
+
+// ✅ 写数据输入，GameObjectAsset 自己会把它应用到 GameObject 上
+var euler = Transform.Rotation;                       // Vector3，欧拉角
+euler.y = Mathf.Repeat(euler.y + spin * Time.deltaTime, 360f);
+Transform.Rotation = euler;
 ```
 
-为了能一眼定性，本目录的 `Status` 字段现在会实时显示：
+> 这条适用于**任何**继承 `GameObjectAsset` / `FromSourceGameObjectAsset` 的资源，
+> 包括道具（`PropAsset`）。想让它们动，改**数据输入**，别改 `transform`。
 
-```
-active=True  frames=1230  rotY=214
-```
+### 顺带记住
 
-- `frames` 一直涨 → `OnUpdate()` 真的在跑
-- `frames` 不动 → `OnUpdate()` 压根没被调用（资源没 active）
+- `GameObjectAsset` 还自带一个 `[DataInput] bool Enabled` —— 面板上的显示/隐藏开关就是它
+- `TransformData` 提供了 `ApplyAsLocalTransform` / `CopyFromLocalTransform` /
+  `ApplyAsWorldTransform` / `CopyFromWorldTransform` 四个方法，
+  需要手动在「数据输入」和「Unity Transform」之间同步时用得上
 
-❓ **是否彻底解决，等你这一轮复验**。如果加了 `SetActive(true)` 还是只有在拖动时才转，
-那说明成因不在 active 状态，得换方向查（下一个怀疑对象是 `GameObjectAsset` 的
-`OnLateUpdate` / `BroadcastTransformOptimized` 会用数据输入里的 Transform 覆盖 GameObject 的 transform）。
+### 关于 `SetActive(true)`
+
+📖 官方文档说资源**默认不是 active 的**，官方示例就是在 `OnCreate` 里 `SetActive(true)`，
+本目录照做了（注意必须写 `protected override`，见下一节）。
+
+❓ **但本机没有单独验证过它是否必需**：加它、去掉它，`frames` 都涨 ——
+因为我们没做「去掉 `SetActive` 单独跑一次」这个对照实验。所以：
+
+- ✅ 确定的：`frames` 在涨 → `OnUpdate()` 在跑
+- ❓ 不确定的：这是 `SetActive(true)` 的功劳，还是本来就会跑
+
+要补这个对照实验说一声。
 
 ## ⚠️ 踩坑：官方文档的 `OnCreate` 签名对 `GameObjectAsset` 是错的
 
@@ -196,9 +233,7 @@ error CS0507: 当重写"protected"继承成员"GameObjectAsset.OnCreate()"时，
 - ❓ `[Markdown]` 字段在资源面板上的实际显示效果
 - ❓ 资源实例的序列化：改过的参数会不会存进场景、重启后还在不在
 - ❓ `sharedassets.*` 到底生不生成（见上表）
-- ❓ 资源是不是「被选中才激活」——你描述的「手动拖它才转」有没有可能是选中触发的，
-  和 active 状态是两回事。加了 `SetActive(true)` 之后如果**常态就转**，
-  就说明这条不成立
+- ❓ `SetActive(true)` 是否真的必需（见上一节的对照实验说明）
 
 ## 未来要做的事：自定义面捕追踪器
 

@@ -44,16 +44,16 @@ namespace HoWarudoModTests.CustomAsset
     public class HoTestCubeAsset : GameObjectAsset
     {
         // 诊断用状态文字。同时暴露 active 状态和帧计数，一眼定性：
-        //   frames 一直涨 -> OnUpdate() 在跑
-        //   frames 不动   -> OnUpdate() 压根没被调用（资源没 active）
+        //   frames 一直涨 -> OnUpdate() 在跑（已实测确认）
+        //   rotY 一直变   -> 旋转真的落到画面上了
         [Markdown]
         public string Status = "starting...";
-
-        private int _frames;
 
         // 每秒自转角度。设成 0 就静止。
         [DataInput]
         public float SpinSpeed = 90f;
+
+        private int _frames;
 
         // ⚠️ 必须是 protected override，不能写 public override。
         //    官方文档示例写的是 `public override void OnCreate()`，但那只对直接继承
@@ -63,26 +63,11 @@ namespace HoWarudoModTests.CustomAsset
         //
         // 📖 官方文档原话：资源创建后**默认不是 active 的**（"By default, assets are
         // NOT active when they are created"），官方给的写法就是在 OnCreate 里显式置位。
-        //
-        // 实测动机：不加这一句时，立方体静止不动，只有在编辑器里手动拖它时才会转
-        // —— 说明未 active 的资源不会被每帧驱动。
         protected override void OnCreate()
         {
             base.OnCreate();
             SetActive(true);
             Status = "active=" + Active;
-        }
-
-        // 触发器：资源面板上的一个按钮。点一下把角度归零。
-        [Trigger]
-        public void ResetRotation()
-        {
-            if (GameObject != null)
-            {
-                GameObject.transform.rotation = Quaternion.identity;
-            }
-            Status = "Rotation reset.";
-            BroadcastDataInput(nameof(Status));
         }
 
         // GameObjectAsset 唯一要我们实现的东西：返回一个 GameObject。
@@ -95,20 +80,53 @@ namespace HoWarudoModTests.CustomAsset
             return cube;
         }
 
+        // 触发器：资源面板上的一个按钮。点一下把角度归零。
+        [Trigger]
+        public void ResetRotation()
+        {
+            var zeroed = Transform.Rotation;
+            zeroed.y = 0f;
+            Transform.Rotation = zeroed;
+            Status = "rotation reset.";
+            BroadcastDataInput(nameof(Status));
+        }
+
         // 📖 资源的 OnUpdate() 每帧调用一次，相当于 Unity 的 Update()。
+        //
+        // ★★★ 本文件最关键的一行知识 ★★★
+        //
+        // 旋转**必须写进资源自己的 `Transform` 数据输入**，不能直接转 GameObject。
+        //
+        // GameObjectAsset 的公开字段（本机元数据转储实测）：
+        //     [DataInput] bool          Enabled
+        //     [DataInput] TransformData Transform
+        // 而 TransformData 是：
+        //     [DataInput] Vector3 Position
+        //     [DataInput] Vector3 Rotation   ← 欧拉角，单位是度
+        //     [DataInput] Vector3 Scale
+        //
+        // GameObjectAsset 每帧都拿这个数据输入回写 GameObject 的 transform。
+        // 所以 `GameObject.transform.Rotate(...)` 会在同一帧被覆盖掉，
+        // 表现就是「平时不转，只有手动拖动（交互期间）才转」——
+        // 这正是本目录第一版的实测症状，也是它唯一的 bug。
         public override void OnUpdate()
         {
             base.OnUpdate();
-            if (GameObject == null)
+
+            if (Transform == null)
             {
                 return;
             }
-            GameObject.transform.Rotate(Vector3.up, SpinSpeed * Time.deltaTime, Space.Self);
+
+            var euler = Transform.Rotation;
+            euler.y = Mathf.Repeat(euler.y + SpinSpeed * Time.deltaTime, 360f);
+            Transform.Rotation = euler;
 
             _frames++;
             if (_frames % 30 == 0)
             {
-                Status = $"active={Active}  frames={_frames}  rotY={GameObject.transform.eulerAngles.y:F0}";
+                Status = "active=" + Active + "  frames=" + _frames
+                         + "  rotY=" + euler.y.ToString("F0");
                 BroadcastDataInput(nameof(Status));
             }
         }
