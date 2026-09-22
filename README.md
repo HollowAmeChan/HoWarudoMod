@@ -4,9 +4,15 @@ Warudo **各类 Mod 的最小可参考实现**。
 
 放在 `BreakWarudo/Assets/HoWarudoModTests/` 下，是一个独立的 git 仓库，可以单独推到 GitHub。
 
-**核心规则：一个目录一个类别。** 目录名就是 Warudo 数据目录里的目标目录名，
-五个工作区（`Props` / `Particles` / `Environments` / `CharacterAnimations` / `Plugins`）
-已经配在 `Assets/ExportSettings.asset` 里，一一对应。
+**核心规则：一个目录一个类别。** 目录名通常就是 Warudo 数据目录里的目标目录名，
+六个工作区（`Props` / `Particles` / `Environments` / `CharacterAnimations` / `Plugins` / `CustomAsset`）
+已经配在 `Assets/ExportSettings.asset` 里。
+
+> **例外**：`CustomAsset`（自定义资源类型）的落点**也是** `StreamingAssets/Plugins`。
+> 因为「资源类型」在打包上根本不是一个独立类型 —— 它就是一个插件类 Mod，
+> 只不过程序集里除了 `[PluginType]` 还多了一个 `[AssetType]` 类。
+> 两个目录发到同一个落点没有任何问题，它们是两个不同的 `.warudo` 文件
+> （工坊的 `Plugins` 目录里同时躺着 6 个包）。
 
 做新 Mod 时照抄对应目录即可（每个目录里都有一份该类别的构建规范）。
 
@@ -26,7 +32,7 @@ Warudo **各类 Mod 的最小可参考实现**。
 
 ---
 
-## 五个类别
+## 六个类别
 
 | 目录 | 类别 | 入口资产（名字必须一致） | 有脚本？ |
 |---|---|---|---|
@@ -35,8 +41,9 @@ Warudo **各类 Mod 的最小可参考实现**。
 | `Mods/Environments` | 环境 | `Environment.unity`（挂 `EnvironmentSettings`） | ❌ 纯资源 |
 | `Mods/CharacterAnimations` | 角色动画 | `Animation.anim` | ❌ 纯资源 |
 | `Mods/Plugins` | 插件（蓝图节点） | 无入口资产，看 `[PluginType]` 类 | ✅ |
+| `Mods/CustomAsset` | 自定义资源（`[AssetType]`） | 无入口资产，看 `[AssetType]` 类 | ✅ |
 
-入口资产由 `1 - 生成各类别最小示例` 自动补齐（插件入口是源码，已经在仓库里）。
+入口资产都已经在仓库里了。
 
 ### 为什么不能把几个类别塞进一个目录
 
@@ -48,6 +55,9 @@ Warudo **各类 Mod 的最小可参考实现**。
 - `Environments/` → 资源里的「环境」（环境组件 → 源）
 - `CharacterAnimations/` → 资源里的「角色 → 动画 → 待机动画」
 - `Plugins/` → 插件系统启动时加载，节点进蓝图节点新建列表
+- `CustomAsset/` → **落点同样是 `Plugins/`**，但程序集里的注册属性是 `[AssetType]` 而不是
+  `[NodeType]`，所以注册出来的条目进的是**「添加资源」菜单**，不是蓝图节点面板。
+  也就是说**落点目录相同时，是 `[PluginType]` 里列的东西决定它变成什么**。
 
 往同一个 `.warudo` 里塞两个类别的入口，**不会报错**，但只有落点目录对应的那一个会生效，
 其余静默失效。所以：**一个类别一个目录，一个目录一个包。**
@@ -58,35 +68,32 @@ Warudo **各类 Mod 的最小可参考实现**。
 
 ```
 HoWarudoModTests/
-├── Editor/
-│   └── HoModTestBuilder.cs           脚手架 + 工作区同步 + 构建 + 产物校验
 ├── Mods/
-│   ├── Props/                        ← 道具（入口 Prop.prefab 自动生成）
+│   ├── Props/                        ← 道具（入口 Prop.prefab）
 │   │   ├── HoTestPropSpinner.cs      挂在 Prop 根节点上的 MonoBehaviour
 │   │   ├── HoTestPropUtils.cs        同目录，但没有任何组件引用它
 │   │   └── Internal/
 │   │       └── HoTestPropInternal.cs 子目录里
-│   ├── Particles/                    ← 粒子（入口 Particle.prefab 自动生成）
-│   ├── Environments/                 ← 环境（入口 Environment.unity 自动生成）
-│   ├── CharacterAnimations/          ← 角色动画（入口 Animation.anim 自动生成）
-│   └── Plugins/                      ← 插件
-│       ├── HoTestPlugin.cs           [PluginType] 入口
-│       └── Nodes/
-│           ├── HoTestGreetNode.cs    节点 1：四种端口齐全
-│           └── Sub/
-│               └── HoTestAddNode.cs  节点 2：嵌套子目录 + 纯数据节点
+│   ├── Particles/                    ← 粒子（入口 Particle.prefab）
+│   ├── Environments/                 ← 环境（入口 Environment.unity）
+│   ├── CharacterAnimations/          ← 角色动画（入口 Animation.anim）
+│   ├── Plugins/                      ← 插件（蓝图节点）
+│   │   ├── HoTestPlugin.cs           [PluginType] 入口
+│   │   └── Nodes/
+│   │       ├── HoTestGreetNode.cs    节点 1：四种端口齐全
+│   │       └── Sub/
+│   │           └── HoTestAddNode.cs  节点 2：嵌套子目录 + 纯数据节点
+│   └── CustomAsset/                  ← 自定义资源类型
+│       ├── HoTestAssetPlugin.cs      [PluginType] 入口，AssetTypes 列出资源类
+│       └── HoTestCubeAsset.cs        [AssetType] 本体
 ├── tools/
-│   ├── compile-check.ps1             编译 Mod 脚本（对真机 Warudo DLL）
-│   └── compile-check-editor.ps1      编译 Editor + Mods（对 UnityEditor + UMod SDK）
+│   └── compile-check.ps1             编译 Mod 脚本（对真机 Warudo DLL）
 └── docs/
     └── 打包与脚本规范.md              规范与踩坑记录
 ```
 
-`Props` 里那三个脚本是**故意**的：一个挂在 Prefab 上、一个没人引用、一个在子目录里 ——
-用来证明 **UMod 会把工作区里所有 `.cs` 都编进 Mod 程序集**，与是否被引用无关。
-
-`Mods/*` 里只有 `Props` 和 `Plugins` 有源码；另外三个是纯资源 Mod，产包里不会有
-`assemblymodules.dat`，这也是一种合法形态。
+`Mods/*` 里 `Props` / `Plugins` / `CustomAsset` 有源码；另外三个是纯资源 Mod，
+产包里不会有 `assemblymodules.dat`，这也是一种合法形态。
 
 ---
 
@@ -105,7 +112,7 @@ HoWarudoModTests/
 3. 名称跟随目录名
 4. 点 **「构建 Warudo Mod」**
 
-五个工作区（`Props` / `Particles` / `Environments` / `CharacterAnimations` / `Plugins`）
+六个工作区（`Props` / `Particles` / `Environments` / `CharacterAnimations` / `Plugins` / `CustomAsset`）
 已经写在 `Assets/ExportSettings.asset` 里，导出目录直接指向 Warudo 数据目录下的对应子目录，
 所以在同一页的 **「Warudo 工作区」** 面板里也能直接切。
 
@@ -138,6 +145,7 @@ CharacterAnimations 只会写一行 `Started monitoring <目录>`，**不记具�
 | `Particles` | **蓝图 → `粒子效果源` 节点** → 粒子来源里选 `Particles` |
 | `Environments` | **资源 → 环境 → 环境组件 → 源** → 选 `Environments`（切过去能看到立方体标记物） |
 | `CharacterAnimations` | **资源 → 角色 → 动画 → 待机动画** → 卡片网格里出现 `CharacterAnimations` |
+| `CustomAsset` | **资源 → 添加资源 → `CATEGORY_DEBUG` 分组** → `Ho Test Cube`（❓ 本轮待实测） |
 
 > 以上**都不是唯一入口**，但都是可以直接验收的入口。其余入口未逐一查验。
 
@@ -184,16 +192,15 @@ HoUnityTools 仓库的 `.warudo-mod-research/.tools/` 下
 
 ## 装进 Warudo 试
 
-`2 - 同步工作区` 会把导出目录直接指到 Warudo 数据目录，所以构建完就已经装好了：
+`Assets/ExportSettings.asset` 里的六个工作区导出目录已经直接指向 Warudo 数据目录，
+所以构建完就已经装好了：
 
 ```
 <Steam>\steamapps\common\Warudo\Warudo_Data\StreamingAssets\Props\Props.warudo
 <Steam>\steamapps\common\Warudo\Warudo_Data\StreamingAssets\Plugins\Plugins.warudo
+<Steam>\steamapps\common\Warudo\Warudo_Data\StreamingAssets\Plugins\CustomAsset.warudo
 ...
 ```
-
-数据目录是**从你已有的工作区反推**的：取任意一个导出目录，末段是已知类别名就退一级。
-推不出来时会报错并提示你先把某个工作区的导出目录指到 `StreamingAssets/<类别>`。
 
 装好后：
 
