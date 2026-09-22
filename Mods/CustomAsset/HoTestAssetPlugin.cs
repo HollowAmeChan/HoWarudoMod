@@ -30,7 +30,11 @@ namespace HoWarudoModTests.CustomAsset
         {
             typeof(HoTestCubeAsset),
             typeof(HoTestCounterAsset),
-            typeof(HoTestFaceTrackerAsset)
+            typeof(HoTestLightAsset),
+            typeof(HoTestCharacterDaemonAsset),
+            typeof(HoTestFaceTrackerAsset),
+            typeof(HoTestFullBodyTrackerAsset),
+            typeof(HoTestSourceAsset)
         })]
     public class HoTestAssetPlugin : Plugin
     {

@@ -93,6 +93,10 @@ public class HelloWorldAsset : Asset { }
 | `HoTestCubeAsset.cs` | 立方体，`Transform` 数据输入驱动自转 | `GameObjectAsset` |
 | `HoTestCounterAsset.cs` | 纯逻辑计数器，**没有 GameObject** | `Asset`（最裸） |
 | `HoTestFaceTrackerAsset.cs` | **面捕追踪器**，输出合成正弦混合形状 | `GenericTrackerAsset` |
+| `HoTestFullBodyTrackerAsset.cs` | **全身追踪器**，两只大臂正弦摆动 | `GenericFullBodyTrackerAsset` |
+| `HoTestLightAsset.cs` | 青色点光源 | `LightAsset` |
+| `HoTestCharacterDaemonAsset.cs` | 骨骼驱动型，**无抽象成员**也能注册 | `CharacterDaemonAsset` |
+| `HoTestSourceAsset.cs` | 从「来源」下拉里加载 | `FromSourceGameObjectAsset` |
 
 > ✅ 一个插件 Mod 可以一次注册**多个**资源类型 —— 全部列在
 > `[PluginType(..., AssetTypes = new[] { ... })]` 里即可，缺一个就不出现在「添加资源」菜单。
@@ -132,17 +136,28 @@ public class HelloWorldAsset : Asset { }
 
 构建 `CustomAsset` 工作区 → 重启 Warudo（插件类 Mod 只在启动时加载）→ 然后：
 
-### A. 三个资源类型都出现了吗
+### A. 七个资源类型都出现了吗
 
 **资源 → 添加资源**，应当看到：
 
 | 分组 | 条目 | 来自 |
 |---|---|---|
-| `CATEGORY_DEBUG` | `Ho Test Cube` | `HoTestCubeAsset` |
-| `CATEGORY_DEBUG` | `Ho Test Counter` | `HoTestCounterAsset` |
-| `CATEGORY_MOTION_CAPTURE` | `Ho Test Face Tracker` | `HoTestFaceTrackerAsset` |
+| `CATEGORY_DEBUG` | `Ho Test Cube` | `GameObjectAsset` |
+| `CATEGORY_DEBUG` | `Ho Test Counter` | `Asset`（最裸） |
+| `CATEGORY_DEBUG` | `Ho Test Light` | `LightAsset` |
+| `CATEGORY_DEBUG` | `Ho Test Character Daemon` | `CharacterDaemonAsset` |
+| `CATEGORY_PROP` | `Ho Test Source Prop` | `FromSourceGameObjectAsset` |
+| `CATEGORY_MOTION_CAPTURE` | `Ho Test Face Tracker` | `GenericTrackerAsset` |
+| `CATEGORY_MOTION_CAPTURE` | `Ho Test Pose Tracker` | `GenericFullBodyTrackerAsset` |
 
-三个都在 = `AssetTypes` 注册成功；少一个就是漏列了。
+七个都在 = `AssetTypes` 注册成功；少一个就是漏列了。
+
+### A2. `Ho Test Light` / `Ho Test Pose Tracker`
+
+- `Ho Test Light`：添加后场景里出现一盏**青色点光源**，选中可调颜色 / 强度 / Range
+- `Ho Test Pose Tracker`：加进场景并指定 `Character` 后，角色**两只大臂前后摆**
+- `Ho Test Source Prop`：加的瞬间 `Source` 下拉是空的（❓ 正常，来源体系未验证），
+  能选中这个资源本身就算通过
 
 ### B. `Ho Test Cube`（GameObjectAsset）
 
@@ -321,9 +336,84 @@ public override List<string> InputBlendShapes => BlendShapes.ARKitBlendShapeName
 
 ❓ **还没实测过**：它到底能不能独立工作（不配 template），以及混合形状是否真能到达角色脸。
 
-## 下一步：两种还没覆盖的资源类型
+## ✅ 全部可派生的资源基类，已 7/7 覆盖
 
-### 1. `CharacterTrackingTemplate` —— 让它出现在「追踪方案」下拉里
+用元数据把 `Warudo.Core.dll` + `Warudo.Plugins.Core.dll` 里继承自
+`Warudo.Core.Scenes.Asset` 的类型**全部**求了一遍闭包，一共 18 个，其中：
+
+- **7 个 abstract** → 想加自己的资源就必须派生它们（就是下面这 7 个，已全覆盖）
+- **11 个是 sealed 或内置具体类** → 直接用内置的就行，Mod 不需要管
+
+### 7 个可派生基类
+
+| # | 基类 | 本目录的最小实现 | 要求子类实现 |
+|---|---|---|---|
+| 1 | `Warudo.Core.Scenes.Asset`（最裸） | `HoTestCounterAsset` | 无 |
+| 2 | `...Assets.GameObjectAsset` | `HoTestCubeAsset` | `CreateGameObject()` |
+| 3 | `...Assets.FromSourceGameObjectAsset` | `HoTestSourceAsset` | `GetSources()` |
+| 4 | `...Assets.Character.CharacterDaemonAsset` | `HoTestCharacterDaemonAsset` | **无**（最省事） |
+| 5 | `...Assets.Environment.LightAsset` | `HoTestLightAsset` | `CreateGameObject()` + `IsRangeSupported()` |
+| 6 | `...Assets.MotionCapture.GenericTrackerAsset` | `HoTestFaceTrackerAsset` | `UpdateRawData()` |
+| 7 | `...Assets.MotionCapture.GenericFullBodyTrackerAsset` | `HoTestFullBodyTrackerAsset` | `UpdateRawData()` |
+
+> 「要求子类实现」这一列是用**探针**问出来的：写一个什么都不实现的空子类去编译，
+> 编译器会把缺的抽象成员一个个列出来。比读文档可靠得多 —— 文档是旧版本的。
+
+### 那 11 个不用派生的
+
+`CharacterAsset`(sealed) `EnvironmentAsset`(sealed) `PropAsset` `ScreenAsset` `AnchorAsset`
+`CameraAsset` `FPSCounterAsset` `DirectionalLightAsset` `PointLightAsset`
+`MagicaClothWindAsset` `MagicaCloth2WindAsset` `VRMWindAsset`
+
+—— 这些都是开箱能用的具体资源，不需要 Mod。
+
+## ★ 关于「看放 mod 的文件夹就懂分类」——查证结果
+
+你说得对，**分类就是目录**。但查完之后有个结论要修正认知：
+
+### `StreamingAssets` 下的目录分两类
+
+`Warudo.Plugins.Core.dll` 的 **UTF-16 字面量堆**里存在这些目录名：
+
+```
+Props  Characters  Particles  Environments  Images  Sounds  Videos  LUTs
+CharacterAnimations  Playground
+```
+
+看起来有 10 个分类，但其中 **`Images` / `Sounds` / `Videos` / `LUTs` 不是 `.warudo` 分类**，
+它们是**直接丢文件的媒体目录**。证据：
+
+1. ✅ 全部历史日志里 `[LocalResourceMonitor] Started monitoring` 只出现过
+   `Characters` / `Environments` / `Props`（以及 `Plugins` / `Playground` / `Localizations`
+   走的是另外的 monitor）—— **`Images` / `Sounds` / `Videos` / `LUTs` 一次都没出现过**
+2. ✅ 它们对应的数据输入是**字符串文件名**而不是资源引用：
+   `CameraAsset.LUTTexture [DataInput] string`、`LUTIntensity [DataInput] float`
+3. ✅ 配套的是「打开文件夹」按钮而不是「选择资源」：
+   `CameraAsset.LUTOpenImagesFolder()` / `ScreenAsset.OpenImagesFolder()` /
+   `OpenVideosFolder()` / `OpenMaskImageFolder()`
+4. ✅ `CameraAsset.LUTOpenImagesFolder()` 打开的是 **`Images`** 目录
+   —— 说明 LUT 是 `Images/` 下的图片，`LUTs/` 甚至不是主入口
+
+所以现阶段的结论是：
+
+| 目录 | 性质 | 我们覆盖了吗 |
+|---|---|---|
+| `Props` / `Characters` / `Particles` / `Environments` / `CharacterAnimations` | **`.warudo` 资源分类** | ✅ 五个工作区 |
+| `Plugins` | **`.warudo` 插件分类**（含资源类型 / 节点类型） | ✅ 第六个工作区 |
+| `Playground` | 脚本热重载 | 不适用 |
+| `Images` / `Sounds` / `Videos` / `LUTs` | ❓ **疑似纯文件目录** | 见下 |
+| `HandPoses` / `Motions` / `Scenes` / `MMD` / `Music` / `LipSyncProfiles` … | ❓ 未在 Plugins.Core 里出现 | 未查 |
+
+❓ **上表最后两行还没做实机定论。** 零成本的决定性实验（不用猜任何东西）：
+
+1. 把现成的 `Props.warudo` **复制一份**到 `StreamingAssets/Images/`（随便叫什么名）
+2. 重启 Warudo
+3. 看日志里有没有 `[LocalResourceMonitor] Started monitoring Images`
+
+有 → `Images` 是 `.warudo` 分类，我们得补；没有 → 确认是纯文件目录，到此为止。
+`Sounds` / `Videos` / `LUTs` / `HandPoses` 同理，一次重启可以全放进去一起测。
+
+## 还没做的：`CharacterTrackingTemplate`
 
 追踪器资源加进去之后，用户还得手动指定角色、手动连线。官方做法是配一个
 **tracking template**，让 Warudo 在角色的「追踪方案」里直接列出 `Ho Test Face Tracking`，
@@ -341,30 +431,29 @@ public override List<string> InputBlendShapes => BlendShapes.ARKitBlendShapeName
 - 赌 UMod 编 Mod 时也引用 `Assembly-CSharp.dll`（我们的编译检查脚本会把它算进去，
   因为它在 `Managed` 目录里 —— 但**这不代表 UMod 也这么干**）
 
-要往下走，最快的验证是：写一个最小 template 文件，**在 Unity 里真构建一次**，
+最快的验证是：写一个最小 template 文件，**在 Unity 里真构建一次**，
 看 UMod 报不报引用错误。一次构建就能定性。
 
-### 2. `FromSourceGameObjectAsset` —— 「从来源加载」型资源
-
-道具（`PropAsset`）和角色走的就是这条路：不是自己造 GameObject，而是从 Mod 资源里**选一个来源**加载。
-
-✅ 本机探针实测（用一个故意写错签名的空子类反复编译，让编译器报出正确签名）：
+## `GetSources()` 的来源体系（✅ 元数据实测）
 
 ```csharp
-// 抽象成员只有一个：
-protected override UniTask<AutoCompleteList> GetSources();
-//   UniTask            -> Cysharp.Threading.Tasks
-//   AutoCompleteList   -> Warudo.Core.Data（public 字段 List<AutoCompleteCategory> categories）
-//   AutoCompleteEntry  -> public string label / public string value
-//   还有个扩展方法 AutoCompleteExtensions.ToAutoCompleteList(this IEnumerable<AutoCompleteEntry>)
+// 0.15.0：Context 是 Warudo.Core.Context 上的**静态**成员，不是 Asset 的成员。
+// 官方 VMC 示例里的 `Context.PluginManager` 是 0.14.x 写法。
+Context.ResourceManager.ProvideResources(string kind)   // -> List<ResourceProviderResult>
+Context.ResourceManager.ResolveResourceUri(string)      // 由基类负责调用
 ```
 
-❓ **障碍**：`GetSources()` 只是「列出可选来源」。真要让选中的来源**加载出东西**，
-得接 Warudo 的资源提供器 / 解析器体系（官方文档有
-`Resource Providers & Resolvers` 一章）。这是一块独立调研，没摸清之前不硬写 —— 
-写个能编译但加载不出任何东西的「最小实现」没有验证价值。
+| 类型 | 成员 |
+|---|---|
+| `ResourceProviderResult` | `string providerName` / `List<Resource> resources` |
+| `Resource` | `string category` / `string label` / `Uri uri` |
+| 扩展方法 | `ResourceUriProviderResultExtensions.ToAutoCompleteList(List<ResourceProviderResult>)` |
 
-要继续就说一声，我去读那一章 + 找工坊里真实的来源型资源 Mod 对照。
+`kind` 取值（✅ 从 Plugins.Core 的 UTF-16 字面量堆里实测到）：
+`prop` / `character` / `particle` / `environment` / `image` / `sound` / `video` / `LUT`
+
+❓ 本目录用的是 `ProvideResources("prop")`，**没实机验证过下拉框是否真能列出道具来源**。
+如果下拉是空的，第一个要试的就是换 kind。
 
 ## 其余未验证项（别当成结论）
 
