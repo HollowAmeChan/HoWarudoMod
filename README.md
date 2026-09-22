@@ -117,10 +117,24 @@ CharacterAnimations 只会写一行 `Started monitoring <目录>`，**不记具�
 | 包 | 在 Warudo 里看哪里 |
 |---|---|
 | `Plugins` | `Blueprints` → 节点面板 → 分类 **`HoWarudoModTests`**（`Ho Test Greet` / `Ho Test Add`） |
-| `Props` | `Assets` → `+` → **Prop** → 该资产的 **Source** 下拉选 `Props` |
-| `Particles` | 粒子节点（`Spawn Particle` 等）的下拉 |
-| `Environments` | Environment 资产的 **Source** 下拉；切过去会看到一个立方体标记物 |
-| `CharacterAnimations` | 角色的**动画来源**下拉 |
+| `Props` | 通过 **Prop** 资产的 **Source** 选到 `Props` |
+| `Particles` | 通过粒子节点（`Spawn Particle` 等）的粒子来源选到 `Particles` |
+| `Environments` | 通过 **Environment** 资产的 **Source** 选到 `Environments`；切过去会看到一个立方体标记物 |
+| `CharacterAnimations` | 角色的**待机动画**选择器里出现一张卡片 `CharacterAnimations` |
+
+> ⚠️ 上表的 UI 名称只有 `CharacterAnimations` 一行是**实测**的（带搜索框的卡片选择器），
+> 其余几行是按 asset 类型名推的，实际用词可能不同。
+
+### 实测结论：一个角色动画 Mod = 一个动画
+
+角色动画选择器里**只有一张卡片，标的是 Mod 名**，没有第二级切片列表。
+`Mods/CharacterAnimations/` 里放过的第二个切片（`Wave.anim`）**完全不会出现**。
+
+所以：
+
+* 入口切片**必须叫 `Animation`**，同目录里其它切片会被打包但不会被 Warudo 使用；
+* 想要多个动画 = **建多个 Mod**，一个 Mod 一个 `Animation`；
+* 卡片上的缩略图来自工作区的 **Mod Icon**（没设就是"无预览"）。
 
 
 ---
