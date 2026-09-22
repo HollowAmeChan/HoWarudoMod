@@ -65,6 +65,16 @@ Unity 菜单栏依次执行：
 > 注意：`Unity.exe` 是 GUI 程序，PowerShell 里用 `&` 调用**不会等待**。要等它结束请用
 > `Start-Process -Wait -PassThru`。
 
+### 不启动 Unity 的编译自检（秒级）
+
+```powershell
+powershell -File tools\compile-check.ps1
+```
+
+它用 Roslyn 把 `Mods/*/**.cs` 直接对着**真机 Warudo DLL**（默认 `D:\steam\...\Warudo_Data\Managed`）
+编译一遍，不经过 Unity。命名空间遮蔽、字段撞基类这类错误几秒就能发现，不用等编辑器导入。
+换路径用 `-ManagedDir` / `-CscPath`。
+
 ---
 
 ## 产物怎么判定
@@ -135,3 +145,15 @@ Unity 菜单栏依次执行：
 
 6. **`.meta` 要提交。** 这个仓库是 Unity 工程的一部分，Unity 会为每个文件生成 `.meta`；
    首次在 Unity 里导入后请把生成的 `.meta` 一起提交，否则别人拉下来引用会错位。
+
+7. **命名空间不要起成 `...Plugin`。** `using Warudo.Core.Plugins` 里的 `Plugin` 基类会被
+   自己所在的命名空间遮蔽，报
+   `CS0118: "Plugin" 是命名空间，但此处被当做类型来使用`。
+   本仓库用的是 `HoWarudoModTests.PluginMod`，就是为了避开这个坑。
+
+8. **`[DataInput]` 字段名不要撞 `Node` 基类成员。** 例如 `Name` 会报
+   `CS0108: HoTestGreetNode.Name 隐藏继承的成员 Node.Name`，
+   数据输入请取业务名（本仓库用 `Who`），否则会遮蔽基类字段。
+
+9. **`.ps1` 要用纯 ASCII 或带 BOM。** Windows PowerShell 5.1 把无 BOM 的文件按 ANSI 读，
+   中文注释会直接把脚本读崩。`tools/compile-check.ps1` 因此写成全英文。

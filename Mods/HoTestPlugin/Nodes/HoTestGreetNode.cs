@@ -9,11 +9,14 @@
 //   [FlowInput]  -> public 方法，返回值必须是 Continuation
 //   [FlowOutput] -> public 字段，类型必须是 Continuation
 //   Continuation 三态：return Exit; / return null;（流程终止）/ InvokeFlow(nameof(Exit));
+//
+// ⚠️ 数据输入不要叫 Name：Node 基类已经有 Name 成员，会撞出 CS0108 并遮蔽基类字段。
+//    这里用 Who。
 
 using Warudo.Core.Attributes;
 using Warudo.Core.Graphs;
 
-namespace HoWarudoModTests.Plugin.Nodes
+namespace HoWarudoModTests.PluginMod.Nodes
 {
     [NodeType(
         Id = "9f1d0a24-6b7f-4d3e-9c2a-1b0e5f7a8c11",
@@ -22,12 +25,12 @@ namespace HoWarudoModTests.Plugin.Nodes
     public class HoTestGreetNode : Node
     {
         [DataInput]
-        public string Name = "World";
+        public string Who = "World";
 
         [FlowInput]
         public Continuation Enter()
         {
-            _greeting = "Hello, " + Name + "!";
+            _greeting = "Hello, " + Who + "!";
             return Exit;
         }
 
