@@ -413,6 +413,25 @@ CharacterAnimations  Playground
 有 → `Images` 是 `.warudo` 分类，我们得补；没有 → 确认是纯文件目录，到此为止。
 `Sounds` / `Videos` / `LUTs` / `HandPoses` 同理，一次重启可以全放进去一起测。
 
+### ✅ 追加证据：`LUTs` 已确定为纯文件目录
+
+拆了工坊 `3097459622` = `Plugins\CustomLUTLoader.warudo`（19,439 B，一个 13 KB 的插件 DLL），
+扫它程序集里的 **UTF-16 字面量**只挑出这几个相关的：
+
+```
+Custom LUTs
+LUTs
+LUTs/FILEMARKER        ← 它按「文件」枚举 LUTs 目录，连 FILEMARKER 都在枚举结果里
+texture2d://data/      ← 纹理走 URI 方案解析，不是资源包
+```
+
+结论：**`LUTs` 是"往目录里丢图片文件"的文件夹**，LUT 通过
+`texture2d://data/...` 这种 URI 被引用 —— 一个 `.warudo` 资源包没法往那儿投递东西。
+这和 `CameraAsset.LUTOpenImagesFolder()` 指向 `Images` 目录是互相印证的
+（`Images/` 放图，`LUTs/` 是另一个入口）。
+
+`HandPoses` / `Motions` / `Scenes` / `MMD` / `Music` / `LipSyncProfiles` 仍未查。
+
 ## 还没做的：`CharacterTrackingTemplate`
 
 追踪器资源加进去之后，用户还得手动指定角色、手动连线。官方做法是配一个
