@@ -159,10 +159,21 @@ namespace HoFaceTracking.Nodes
         // "无法访问的代码"（CS0162），而且以后改开关还得重编译整份 —— 这里两种都行不通，就用字段。
         private static readonly bool ProbeEnabled = true;
 
-        private static readonly string[] ProbeRawKeys =
+        /// <summary>
+        /// 抽样的 (原始键, 出口键) 对。
+        /// ⚠️ 名字要用**这台设备真实发的**那套（2026-09-25 实测：形态键是 iFacialMocap 命名
+        /// `jawOpen` / `mouthSmile_L`…，标量是 VTS 命名 `Rotation_x` / `Position_x`…）。
+        /// </summary>
+        private static readonly string[,] ProbePairs =
         {
-            "JawOpen", "MouthSmileLeft", "BrowInnerUp", "EyeBlinkLeft", "EyeSquintLeft",
-            "CheekPuff", "Rotation_x", "Position_x"
+            { "jawOpen", "jawOpen" },
+            { "mouthSmile_L", "mouthSmileLeft" },
+            { "browInnerUp_L", "browInnerUp" },
+            { "EyeBlinkLeft", "eyeBlinkLeft" },
+            { "eyeSquint_L", "eyeSquintLeft" },
+            { "cheekPuff", "cheekPuff" },
+            { "Rotation_x", "Head/RotX" },
+            { "Position_x", "Head/PosX" }
         };
 
         private float lastProbeTime;
@@ -195,17 +206,13 @@ namespace HoFaceTracking.Nodes
             var text = new System.Text.StringBuilder();
             text.Append("[Ho 面捕] 探针 raw ").Append(Raw != null ? Raw.Count : 0).Append(" 键  ");
 
-            for (int i = 0; i < ProbeRawKeys.Length; i++)
+            for (int i = 0; i < ProbePairs.GetLength(0); i++)
             {
-                string key = ProbeRawKeys[i];
+                string key = ProbePairs[i, 0];
+                string canonical = ProbePairs[i, 1];
+
                 float raw = 0f;
                 bool hasRaw = Raw != null && Raw.TryGetValue(key, out raw);
-
-                // 处理后的那个键：`ARKit/<规范名>` 出去时去前缀，所以规范名就是 VtsWire 的反面；
-                // 这里直接用"原始键的小驼峰"当规范名查（我们的调试配置正是 1:1 同名）。
-                string canonical = char.ToLowerInvariant(key[0]) + key.Substring(1);
-                if (key.StartsWith("Rotation_", System.StringComparison.Ordinal)) canonical = "Head/RotX";
-                if (key.StartsWith("Position_", System.StringComparison.Ordinal)) canonical = "Head/PosX";
 
                 float processed = 0f;
                 bool hasProcessed = false;
