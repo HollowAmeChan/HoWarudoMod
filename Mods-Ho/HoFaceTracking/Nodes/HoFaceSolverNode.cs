@@ -69,6 +69,7 @@ namespace HoFaceTracking.Nodes
         private readonly HoFaceController controller = new HoFaceController();
         private bool controllerActive;
         private int evaluatedFrame = -1;
+        private string loggedState;
 
         /// <summary>
         /// 一帧只算一次，且**谁先读谁触发**（同参数处理节点：Warudo 没承诺节点之间的执行顺序，
@@ -88,6 +89,24 @@ namespace HoFaceTracking.Nodes
             solver.Solve(Parameters);                       // 位置（以及控制器缺席时的形状/骨骼）
             controllerActive = controller.Prepare(ControllerPath);
             if (controllerActive) controller.Solve(Parameters);
+
+            // 结构一变就写一行日志（**不含会每帧变的东西** —— 头姿那种每一帧都不一样，
+            // 写进去日志就会被刷屏，接收器那边踩过这个坑：一份 Player.log 被刷掉一万五千行）。
+            string state = LogState();
+            if (state != loggedState)
+            {
+                loggedState = state;
+                Debug.Log("[Ho 面捕] 控制求解 " + state);
+            }
+        }
+
+        /// <summary>写进日志的那份状态：只放"结构"（控制器状态 / 参数键数 / 形状数 / 有脸），不放头姿。</summary>
+        private string LogState()
+        {
+            return "参数 " + (Parameters != null ? Parameters.Count : 0) + " 个键"
+                + "  ·  形状 " + (controllerActive ? controller.BlendShapes.Count : solver.BlendShapes.Count) + " 个"
+                + "  ·  有脸=" + (Tracked ? "是" : "否")
+                + (string.IsNullOrEmpty(ControllerPath) ? "" : "  ·  控制器：" + controller.Status);
         }
 
         /// <summary>把控制器换掉（同一路径下文件被替换时，靠这个按钮重读）。</summary>
