@@ -237,7 +237,13 @@
 * **特意没有**：iFacialMocap 那套重复行、`Root/` 保留名（VTS 手机不报根位）。
   头姿/头位的**单位与符号未标定**（VTS 裸值直通），写在那一行的 `notes` 里 —— 调试要看的是"有没有流过去"，
   不是"好不好看"；标定好之后把它抄成自己的配置。
+* ⚠️ **头/眼那些行必须带自己的 `curve`（第一版就是栽在这）**：不写 `curve` 时默认是 **`0..1 → 0..1` 线性**，
+  而且 `HoFaceCurve.Transfer` 会**先按端点夹取**再求值 —— 度数（`Rotation_x ≈ ±3`）与位置（`Position_x ≈ ±2..5`）
+  会被夹成 0/1，负值全变 0。表现是"**头姿恒为 `(0,0,0)°`、`Head Position` 恒为 `(0,0,0)`，而形态键一切正常**"，
+  看着像"头那部分没接线"，其实是曲线把值夹没了。现在给的是 **±180（角度）/ ±100（位置）的宽范围恒等曲线**。
+  完整规则也写进了 HoUnityTools `docs/FACE_TRACKING_MIDDLE_LAYER.md` §5 的 `curve` 那一段。
 * 用法：在「HoFace参数处理」的 `配置文件` 里填 `ho-debug.hoface.json`（沙箱里那份；沙箱路径见 `状态` 口）。
+  **改这个文件不用重启**：配置按文件时间戳失效重读（`HoFaceProfileStore`），存盘后一秒内自动生效。
 
 **② 一个调试用的控制器 bundle**：菜单 **`HoWarudoModTests/造调试用控制器 bundle（AssetBundle）`**
 （脚本 `tools/Editor/HoDebugBundleBuilder.cs`，**Editor 专用、不进 mod 包**）。
