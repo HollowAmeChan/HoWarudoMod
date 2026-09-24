@@ -174,9 +174,26 @@ namespace HoFaceTracking.Core
             }
 
             _restCaptured = false;
-            Status = "已载入：" + System.IO.Path.GetFileName(path) + "（参数 " + ParameterCount + " 个，形状 "
+            Status = "已载入：" + FileName(path) + "（参数 " + ParameterCount + " 个，形状 "
                 + _shapeNames.Count + " 个，网格 " + _meshes.Count + " 个）";
             return true;
+        }
+
+        /// <summary>
+        /// 从路径里抠出文件名（只为状态文字好看）。
+        /// ⚠️ **不能用 `System.IO.Path.GetFileName`** —— UMod 的安全校验禁掉整个 `System.IO` 命名空间
+        /// （2026-09-25 实测：真机构建报 `Illegal reference to disallowed namespace: System.IO`
+        /// + `Illegal reference to disallowed type: System.IO.Path`，就毙在这一句上）。
+        /// 所以这里自己按分隔符切一刀。
+        /// </summary>
+        private static string FileName(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return "";
+
+            int cut = path.LastIndexOf('/');
+            int backslash = path.LastIndexOf('\\');
+            if (backslash > cut) cut = backslash;
+            return cut >= 0 && cut + 1 < path.Length ? path.Substring(cut + 1) : path;
         }
 
         /// <summary>

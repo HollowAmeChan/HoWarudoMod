@@ -170,15 +170,22 @@
 
 **❓ 还没验证的（第一次真机跑就看这几条）**：
 
-1. **UMod 的安全校验放不放行 `UnityEngine.AssetBundle`** —— 本地问不出来：我拿
-   `Trivial.CodeSecurity` 的默认规则集做探针，**连 `System.Net.Sockets` 都被判非法**，而它明明放行
-   （我们的接收器就在用）⇒ 那套默认规则**不是** UMod 的真实规则，只能当"否定信号"用。
-   见 HoUnityTools `docs/pitfalls/BUILD_AND_TOOLING.md` §4.2。
+1. ~~UMod 的安全校验放不放行 `UnityEngine.AssetBundle`~~ → **✅ 没被拦**（2026-09-25 那次构建报告里
+   `Illegal Assembly Reference = '0'`，被点名的只有 `System.IO`，见下面 §「System.IO 被禁」那条）。
+   本地问不出来这件事本身也值得记：`Trivial.CodeSecurity` 的默认规则集**连 `System.Net.Sockets` 都误判**
+   （而它明明放行），那套规则只能当"否定信号"，见 HoUnityTools `docs/pitfalls/BUILD_AND_TOOLING.md` §4.2。
 2. **用户自己打的 bundle 能不能 `LoadFromFile`**（UMod 导出的 `sharedassets.bin` 能不能直接读 ❓ 也没验）。
 3. 运行期给隐藏对象加 `Animator` 后的 `parameters` / 求值 / 采样是否照常。
 
 失败时**`状态` 会逐条点名**失败在哪一步（打不开 bundle / 里面没有控制器 / 里面没有 rig），
 `Player.log` 里也有异常本体。先用一个最小 bundle 试通，再上真控制器。
+
+⚠️ **`System.IO` 整个命名空间被禁（2026-09-25 实测）**：这次构建的**唯一真因**就是这个 ——
+状态文字里用了 `System.IO.Path.GetFileName(path)`，直接
+`Illegal reference to disallowed namespace: System.IO` + `Illegal reference to disallowed type: System.IO.Path`。
+现在改成**自己按分隔符切**。本地 `compile-check.ps1` 的 `UMod sandbox lint` 名单**也加上了 `System.IO`**
+（连带 `System.Reflection` 一族），以后这类引用本地就红。读写文件仍然只能走插件的沙箱 API
+（`Plugin.PersistentData`，见 `HoFaceProfileStore`）。
 
 ### 1.2 `Core/` 里有什么
 
@@ -483,9 +490,11 @@ Warudo 的**纯按钮**就是 `[Trigger(order)]` —— 官方节点一大堆（
    ⚠️ 查官方怎么用某个特性：`warudo-knobs --find-attr <特性全名>` —— **要带 `Attribute` 后缀**
    （写 `Trigger` 会静默返回空，我曾据此写出过"Core 里没有 `[Trigger]`"的错结论）。
 6. **沙箱列目录只能用 `GetFileEntries`**（`GetFiles` 会引入 `System.IO.SearchOption`，构建被拒）。
-   **`System.Reflection` 整个命名空间同理被拒**，连 `value.GetType().Name`（→`MemberInfo::get_Name`）都算 ——
-   名单与现场在 HoUnityTools `docs/pitfalls/BUILD_AND_TOOLING.md` §4/§4.1；
-   `tools/compile-check.ps1:98-152` 的 `UMod sandbox lint` 就是拿这份名单在本地拦（**加新规则就往那里面加**）。
+   **整个 `System.IO` 命名空间都被禁**（2026-09-25 实测：连 `System.IO.Path.GetFileName` 都毙，
+   见 §1.1.2 末尾）；`System.Reflection` 整个命名空间同理，连 `value.GetType().Name`
+   （→`MemberInfo::get_Name`）都算 —— 名单与现场在 HoUnityTools `docs/pitfalls/BUILD_AND_TOOLING.md`
+   §4 / §4.1 / §4.3；`tools/compile-check.ps1` 的 `UMod sandbox lint` 就是拿这份名单在本地拦
+   （**加新规则就往那里面加**）。
 7. `[PluginType]` 的 **`NodeTypes` 必须列全**，漏掉的节点不会出现在面板里
    （`docs/打包与脚本规范.md` §3、§9）。
 

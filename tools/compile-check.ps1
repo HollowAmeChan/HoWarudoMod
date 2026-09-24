@@ -104,6 +104,13 @@ foreach ($rootName in $ModsRoots) {
 # ---------------------------------------------------------------------------
 $bannedPatterns = [ordered]@{
     'System\.Reflection'                 = 'the System.Reflection namespace'
+    # System.IO is banned as a NAMESPACE, confirmed by a real build (2026-09-25):
+    #   Illegal reference to disallowed namespace: System.IO
+    #   Illegal reference to disallowed type: System.IO.Path
+    #   ... HoFaceController::Prepare at IL_0291: Call System.IO.Path::GetFileName
+    # Use the plugin's sandboxed file API (Plugin.PersistentData) instead, and cut
+    # path strings by hand if you only need a display name.
+    'System\.IO\b'                       = 'the System.IO namespace (use Plugin.PersistentData)'
     '\bBindingFlags\b'                   = 'System.Reflection.BindingFlags'
     '\bMemberInfo\b'                     = 'System.Reflection.MemberInfo'
     '\bMethodInfo\b'                     = 'System.Reflection.MethodInfo'
