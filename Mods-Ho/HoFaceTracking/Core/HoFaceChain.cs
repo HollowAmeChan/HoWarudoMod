@@ -58,16 +58,18 @@ namespace HoFaceTracking.Core
         private readonly double[] inputStepUntil;
 
         /// <summary>
-        /// 同名的输入行（按声明顺序）。**这就是"方言兼容"的实现方式**：
-        /// 一个规范名可以配多行（例如安卓 VTS 的 `jawOpen` 与 iPhone VTS 的 `JawOpen`），
-        /// 求值时**从最后一行往前找第一个"这一帧真的算出了值"的行**（见 <see cref="Lookup"/>）。
+        /// 规范名 → 输入行号。
         ///
-        /// ⚠️ 2026-09-25 修：以前是 `inputIndex[名字] = 行号`（**最后一行无条件生效**），
-        /// 于是"安卓那行有数据、iPhone 那行没数据"时，没数据的那行把有数据的那行顶掉了 ——
-        /// 输入行全部缺键、值恒 0，症状是"**只有 head 系（单行）和眨眼（安卓 payload 里恰好有 PascalCase 的
-        /// `EyeBlinkLeft`）在动**"。**同名多行本来就是为了兼容方言，不该让"没数据的方言"赢。**
+        /// **同名多行 = 最后一行生效（后写的赢）** —— 这是**有意**的**覆盖 / 优先级**机制：
+        /// 想在别人的表上盖一行，就把它写在后面。**而且缺数据时不回退**：覆盖行没数据 ⇒ 这一格就是 0
+        /// （"吵"比"偷偷拿下面那行的值"好；静默回退才是最难查的那种）。
+        ///
+        /// ⚠️ 2026-09-25 那次现场是**配置写错**、不是这条规矩错：调试配置里同一格混写了两种方言
+        /// （安卓命名在前、iPhone 命名在后），而设备只发安卓那套 ⇒ 后声明的那行没数据、把有数据的行顶掉 ⇒ 值恒 0，
+        /// 症状是"只有 head 系与眨眼在动"。**修法是让配置只写它真会发的方言**（现在那份就是单方言），
+        /// 不是改这里的语义 —— 我一度把它改成了"每帧取最后一个真有值的行"，**那是错的，已恢复**。
         /// </summary>
-        private readonly Dictionary<string, List<int>> inputRowsByName = new Dictionary<string, List<int>>(StringComparer.Ordinal);
+        private readonly Dictionary<string, int> inputIndex = new Dictionary<string, int>(StringComparer.Ordinal);
 
         private readonly HoFaceOutput[] outputs;
         private readonly string[] outputKeys;        // 出口用的键（已去 `ARKit/` 前缀）
@@ -113,14 +115,8 @@ namespace HoFaceTracking.Core
                 else
                     Note("第 " + (i + 1) + " 条输入行的表达式用不了（" + inputList[i].parameter + "）：" + parseError);
 
-                // 同名多行：全部记下来（顺序 = 声明顺序），求值时再挑"这一帧真有值的那一行"。
-                List<int> sameName;
-                if (!inputRowsByName.TryGetValue(inputList[i].parameter, out sameName))
-                {
-                    sameName = new List<int>();
-                    inputRowsByName[inputList[i].parameter] = sameName;
-                }
-                sameName.Add(i);
+                // 同名多行：最后一行生效（用户覆盖 / 优先级 —— 后写的赢，缺数据也不回退）
+                inputIndex[inputList[i].parameter] = i;
             }
 
             var rows = Middleware.outputs ?? new List<HoFaceOutput>();
@@ -243,18 +239,13 @@ namespace HoFaceTracking.Core
         }
 
         /// <summary>
-        /// 输出行的表达式取值：**先在同名的输入行里从后往前找"这一帧真的算出了值"的那一行**
-        /// （方言兼容：安卓命名的行有数据就用它，iPhone 命名的行有数据就用它；两个都有则后声明的赢），
-        /// 一个都没有时才回退到原始线名。
+        /// 输出行的表达式取值：先看**同名输入行里最后声明的那个**（覆盖 / 优先级），再回退到原始线名。
+        /// 覆盖行这一帧没数据时不回退 —— 那一格就是 0（见 <see cref="inputIndex"/> 的说明）。
         /// </summary>
         private float Lookup(string name)
         {
-            List<int> rows;
-            if (name != null && inputRowsByName.TryGetValue(name, out rows))
-            {
-                for (int i = rows.Count - 1; i >= 0; i--)
-                    if (inputFresh[rows[i]]) return inputValues[rows[i]];
-            }
+            int row;
+            if (name != null && inputIndex.TryGetValue(name, out row)) return inputValues[row];
             return Raw(current, name);
         }
 
