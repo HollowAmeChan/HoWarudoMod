@@ -1,0 +1,372 @@
+# HoFaceTracking（Mods-Ho）
+
+面捕的 Warudo 插件 Mod：**接收 + 处理**两半都在这一个 Mod 里。
+
+* **接收器节点**：把手机发来的原始数据收进来，**原样**交出去（不改名、不换算）。
+* **处理链节点**：拿一份 `*.hoface.json` 中间层配置，把原始线名转成 Warudo 要的形状，
+  输出的 5 个端口与官方接收器取数节点**同形**：`IsTracked` / `BlendShapes` / `HeadPosition` /
+  `RootPosition` / `BoneRotations`。角色不在这边 —— 挂到角色上由**官方那三个应用节点**在图上选
+  （设置角色面部追踪 BlendShape 列表 / 覆盖角色骨骼旋转偏移列表 / 覆盖角色根位置），
+  所以本 Mod 一个角色引用都没有。
+
+> **文档状态：2026-09-25 按源码逐条核对。** 分三段：**现状** → **目标形态** → **待清理 / 未实测**。
+> * `Core/` 里哪些文件是从 HoUnityTools 包搬来的、怎么重新同步 → [`Core/PORTED.md`](Core/PORTED.md)
+> * 方案总览（权威路线图）→ HoUnityTools `docs/FACE_TRACKING_WARUDO_ROUTE.md`
+
+---
+
+## 1. 现状（源码里是什么）
+
+插件身份（`HoFaceTrackingPlugin.cs:32-46`）：
+
+| 项 | 值 |
+|---|---|
+| `[PluginType] Id` | `hollow.hofacetracking`（也是沙箱目录名） |
+| Name / Version | `Ho Face Tracking` / `0.2.0` |
+| NodeTypes | 3 个（见下表） |
+| 命名空间 | `HoFaceTracking.PluginMod`（**不要**叫 `...Plugin`：会遮蔽 `Plugin` 基类，CS0118，见 `HoFaceTrackingPlugin.cs:20-21`） |
+
+### 1.1 节点（3 个，一个 Mod 全包了）
+
+| 节点（代码） | 面板标题 | 状态 | 干什么 |
+|---|---|---|---|
+| `Nodes/HoFaceReceiverStatusNode.cs` | Ho Face 接收器（VTS 手机） | **正式** | VTS 手机 UDP 接收：Connect / Disconnect + `原始值`（字典）+ `新鲜` + 一行 `状态`（**3 个输出口**） |
+| `Nodes/HoFaceMiddlewareNode.cs` | Ho Face 处理链 | **正式** | 中间层 + 控制器合一：读 `*.hoface.json`，产出官方同形的 5 个端口 + 一个合并后的 `状态`（**6 个输出口**） |
+| `Nodes/HoDebugLogNode.cs` | Ho调试日志 | **正式（通用件，跟面捕无关）** | 一个入口 + 一块只读显示 + 一个「复制」按钮（`[Trigger]`，**没有任何输出口**） |
+
+**2026-09-25 清掉的三个临时节点**（摸底用完就删了，别在旧蓝图里找）：
+
+| 删掉的 | 曾经干什么 | 结论落在哪 |
+|---|---|---|
+| `HoFaceValueNode`（Ho Face 原始值（按线名）） | 按线名读一个原值 | 接收器节点的「原始值」口就够了 |
+| `HoFaceCharacterProbeNode`（Ho Face 角色探针） | 层级 / 空间 / ARKit 对照 / Mod 资产 / 复刻 | 已写进路线图 §3–§5 与本文 §1.4–§1.5；**它的观察窗没了**（见 §3.2） |
+| `HoFaceDebugNode` 的旧形态（Ho Face 调试台） | 多行框 + 自动抓取 / 抓取 / 追加 / 清空 + 摘要 | 收成通用件「Ho调试日志」`HoDebugLogNode`（一个入口 + 一块只读显示 + 一个复制按钮） |
+
+`NodeType.Id`（在场景 json 里认节点用）：
+接收器 `1f4b7c2e-9a3d-4e51-b8c7-2d6a0f9e4b73`、处理链 `7c3a91d6-4f2b-48e7-9a15-63d8f0b2c47e`、
+调试日志 `e2a47f83-5d19-4c6b-a07e-91b3c58d4f26`。分类都是 `Ho Face Tracking`。
+（调试日志沿用了旧「调试台」的 Id，所以蓝图里已经放好的那个节点改名后仍然在。）
+
+**接收器节点端口**（`HoFaceReceiverStatusNode.cs`）
+
+* 输入：`手机 IPv4` / `手机端口`（默认 `21412`）/ `本机端口`（默认 `49985`）
+* flow：`Connect` / `Disconnect`
+* 输出（**3 个**）：
+  * `原始值`（`Dictionary<string,float>`，**列表语义 → 单独一个口**，喂处理链）；
+  * `新鲜`（布尔，喂处理链的「输入新鲜」；断流回中性靠它 —— 这是信号，不是给人看的）；
+  * `状态`（一行文本：在不在收 / 状态说明 / 本帧键 / 帧·坏帧 / 距上帧；**只在真丢包时**多一行来源提示）。
+* ⚠️ **轮询是这个节点驱动的**：`OnUpdate` 里调 `HoFaceInputState.Poll()`（`:42-46`）——
+  它不在图里，就没有人收包。
+* **2026-09-25 收口**：原来九个口里的 `运行中` / `本帧键数` / `距上帧秒` / `累计帧·坏帧` / `外来来源` /
+  `本帧原始值` 都只是"给人看一眼"、不驱动任何节点（`本帧原始值` 还是 `原始值` 的文本版），全并进 `状态`。
+  想看整张表就把 `原始值` 接「Ho调试日志」（那边摊成 `线名 = 值`）。
+
+**处理链节点端口**（`HoFaceMiddlewareNode.cs`）
+
+* 输入（顺序用**显式 `[DataInput(order)]` 定死**，不靠声明顺序的默契）：
+  `输入新鲜`(10) ← 接收器「新鲜」；`原始值`(20) ← 接收器「原始值」；`配置文件`(30)（沙箱里的文件名，可留空）
+  —— 前两个 2026-09-25 对调过：`输入新鲜` 是"这一帧还算不算数"的总闸，摆前面。
+* 输出（**与官方取数节点同形的 5 个**）：`Is Tracked` / `BlendShapes`（字典，列表语义）/
+  `Head Position` / `Root Position` / `Bone Rotations`（数组，列表语义）
+* 输出（**合并后的诊断，就这一个**）：`状态` —— 四行：配置行（配置名 · 输入/输出行数 · 原始键 · 新鲜度）·
+  `问题：` · `沙箱：`（配置文件放哪儿）· `可用配置：`（沙箱里现成的几份，逗号分隔）。
+  **2026-09-25 收口**：原来那五个诊断口（`沙箱目录` / `可用配置` / `配置问题` / `发出内容` / `数值预览`）
+  全并进这一条；`数值预览` 那份长文本改成**按「重读配置」按钮时写进 `Player.log`**（不再常驻一个口）。
+* flow：`重读配置`（`Enter`，也有同名的 `[Trigger]` 按钮）。**没有 flow 触发** —— 输出端口惰性求值、
+  一帧只算一次（`Ensure()` 用 `Time.frameCount` 兜），因为 Warudo 没承诺节点之间的执行顺序。
+* `配置文件` 留空 = **用内置默认**（两种内置协议的输入行 + 52 个 `ARKit/` 直通 + 4 根眼睑轴），
+  不是"必填"（`:96-101`；`Core/HoFaceMiddleware.cs:172-278`）。
+* 状态变了就写一行 `Debug.Log`（`:128-136`），所以不接调试节点也能从 `Player.log` 看处理链状态。
+
+`IsTracked` 的判据是手机那条 `FaceFound` 线名，**不是**"有没有收到键"：手机丢追时照样发 15 个标量、
+只有 `BlendShapes` 没了（本帧键 65 → 15），所以 `Raw.Count > 0` 在丢追时依然是 true（`:181-208`）。
+
+### 1.2 `Core/` 里有什么
+
+12 个 `.cs` = **8 份从 HoUnityTools 包同步过来** + 4 份这里自己写
+（`HoFaceChain.cs` 求值器 / `HoFaceInputState.cs` 共享状态 / `HoVtsIphoneReceiver.cs` UDP 接收器 /
+`HoFaceProfileStore.cs` 沙箱读写）。清单、主本在哪边、怎么重新同步 → **`Core/PORTED.md`**。
+
+### 1.3 中间层配置与插件沙箱
+
+* 配置文件放**插件沙箱**：`Warudo_Data/StreamingAssets/Plugins/Data/<pluginId>/`
+  —— 本 Mod 就是 `…/hollow.hofacetracking/`（路线图 §4.4 ✅ 已跑通）。节点上的「状态」口直接给路径，不用猜。
+* 后缀 `*.hoface.json`（`Core/HoFaceProfileStore.cs:29`）。`Core/HoFaceProfile.cs` 现在只是
+  "格式的名字 + 入口"，真正读写走自写的 `Core/HoFaceProfileJson.cs`。
+* 沙箱里**一份都没有**时，插件会写一份内置默认当样板 `ho-2d-test1.hoface.json`
+  （`HoFaceProfileStore.cs:32`、`:118-142`）。
+* 列目录**只能用** `GetFileEntries`：`GetFiles` 的第三个参数是 `System.IO.SearchOption`，
+  UMod 的构建期审查禁止引用 `System.IO.*`，写了直接构建失败（`HoFaceProfileStore.cs:9-13`）。
+* 配置按文件时间戳失效重读；运行中新丢进去的文件靠"找不到就重列一次（1 秒冷却）"才看得见
+  （`:46-56`、`:172-178`）。
+* ⚠️ **数据路径一律不用 `JsonUtility`**（咬过三次：写 profile / 读 profile / 收 VTS 包 —— 52 个形态键静默全丢）
+  → 全走 `HoJson` / `HoVtsPacket` / `HoFaceProfileJson`（`Core/HoJson.cs:18-25`）。
+
+### 1.4 输入协议：现在只有 VTS 手机
+
+* **请求式，不是手机主动推流**：每约 1 秒往 `手机:21412` 发
+  `{"messageType":"iOSTrackingDataRequest","time":5,…}`（买 5 秒，协议只允许 0.5–10 秒），
+  手机把数据发回**请求包的源 IP**、端口用请求里 `ports` 指定 —— 所以手机那边除开关没有要填的东西
+  （`Core/HoVtsIphoneReceiver.cs:8-20`、`:44-51`）。
+* `手机 IPv4` 填错时包被**静默丢掉**，现象和"手机没发 / 防火墙挡了 / 不在同一网段"一模一样 →
+  **只在真丢包时**，接收器的「状态」口会多一行把最近被丢的来源 IP:端口摆出来（`HoFaceReceiverStatusNode.cs`）。
+* 线名是**手机发来的原样**：形态键 `JawOpen` / `EyeBlinkLeft`（0..1，iOS 原始值），
+  头/眼 `Rotation_x/y/z`、`Position_x/y/z`、`EyeLeft_x/y/z`、`EyeRight_x/y/z`。
+  改名与量纲**全在中间层配置的输入行**里（`规范名 = 曲线(表达式(线名…))`）。
+* **iFacialMocap 还没有接收端**：它只在**内置默认配置的输入行**里（`Core/HoFaceMiddleware.cs:207-239`），
+  接收器这条链只有 VTS 手机（`Core/HoFaceInputState.cs:12`「以后接」）。
+
+---
+
+## 2. 目标形态（**2 个 mod / 5 个节点**）
+
+```
+[HoVtsTrack mod]                       [HoVtsTrackController mod]                [官方节点 ×3]
+  HoVts 接收器   ──原始值 / 新鲜 / 状态──▶ 中间层+控制器（合并成一个节点）  ──▶  设置角色面部追踪 BlendShape 列表
+                （裸线名原样交出）        内部 = 我们的中间层配置 + 控制器          覆盖角色骨骼旋转偏移列表
+                                        输出 = BS 列表 / 骨骼旋转偏移 / 根位置     覆盖角色根位置
+```
+
+* 完整版见 HoUnityTools `docs/FACE_TRACKING_WARUDO_ROUTE.md` §2（**5 = 我们的 2 个 + 官方那 3 个**）。
+* 现状离目标的差距：两个 mod 还是一个（`hollow.hofacetracking`）；"控制器"还是**数据树**
+  （`Core/HoFaceChain.cs`，没有影子 Animator）。（三个临时节点 2026-09-25 已经清掉，见 §1.1。）
+* 为什么现在没拆成两个 mod：Warudo **每个 Mod 各自编译成一个程序集**，同名类型跨 Mod 是不同 `Type`，
+  拆开就得复制代码 + 靠端口通信；边界应该是"**Mod 的种类**"（角色 / 插件），不是"功能模块"
+  （`HoFaceTrackingPlugin.cs:12-15`）。
+* 混合树为什么不是 `.controller`：插件 Mod 不能读盘、不能带已编译资源，而 Unity 播放器**无法从文件
+  加载 `AnimatorController`**（只有 AssetBundle 能）—— 所以混合树改成**数据**，由 `HoFaceChain` 求值
+  （`Core/HoFaceChain.cs:3-8`、`Nodes/HoFaceMiddlewareNode.cs:11-16`）。角色身上也确实没有 controller
+  （早前由角色探针实测：`controller=null`；那台探针已删，见 §1.1）。
+
+---
+
+## 3. 清理记录 / 未实测
+
+### 3.1 已经清掉的（2026-09-25）
+
+| 删掉的 | 为什么 |
+|---|---|
+| `Nodes/HoFaceValueNode.cs`（Ho Face 原始值（按线名）） | 接收器节点的「原始值」口给的信息更多，这个只是中间产物 |
+| `Nodes/HoFaceCharacterProbeNode.cs`（Ho Face 角色探针） | 摸底完成，结论已经落进路线图 §3–§5；**它的观察窗也一起没了**（§3.2 有两条判据因此要另找工具） |
+
+同步收缩了 `NodeTypes`（现在 3 个，`HoFaceTrackingPlugin.cs:38-43`）：漏列的节点即使编译进程序集
+也不会出现在节点面板里（`:17-18`）。
+
+`HoFaceDebugNode` 没删，但**重写成了一个通用件 `HoDebugLogNode`（面板名「Ho调试日志」）**
+（`Nodes/HoDebugLogNode.cs`，2026-09-25 定案）。它跟面捕无关，谁都能用 —— 一个入口、一块只读显示、一个复制按钮：
+
+| 端口 | 说明 |
+|---|---|
+| `[DataInput] object 写入` | 上游接这里，**什么类型都能接**（字符串 / 整张表 / 数组） |
+| `[Markdown] [Transient] 日志` | **只读显示**（选不中）；**上游直接接在这一行上也可以**（那种情况下节点不碰它） |
+| `[Trigger(30)] 复制` | 按钮：把**当前这段原文**整份写进系统剪贴板（`GUIUtility.systemCopyBuffer`） |
+
+**为什么显示用只读的 `[Markdown]`（照抄官方「查看值」），而不是能选中的框**：
+值在动的时候**框每帧重画，选区就被冲掉**（用户实测：Ctrl+A 之后还没来得及复制就没了）——
+所以"能选中的框"这条路是死路，复制必须交给按钮。
+官方 `InspectValueNode` 的显示字段就是 `[Markdown(13, False, False)] public String Text`（`warudo-knobs --attrs` 读的），
+我们**原样照抄这一行**：控件由特性决定、不由类决定，这就是"复用内置节点那套玩意儿"。
+（`InspectValueNode` 本身是 **public 非 sealed、`OnUpdate` 是 virtual**，继承技术上可行；
+但它的 `OnUpdate` 靠"字段被推"喂值 —— 对我们不灵，还是得 override，继承只剩"基类端口会不会被发现"这个未验证风险。）
+
+显示版会把换行补成 Markdown 硬换行（行尾两空格），**复制走的是没被改写过的原文**。
+
+**按钮为什么是 `[Trigger]`、剪贴板为什么是 `UnityEngine.GUIUtility`**：
+Warudo 的**纯按钮**就是 `[Trigger(order)]` —— 官方节点一大堆（`CommentNode.Edit/Done`、
+`SetAssetPositionNode.AlignTargetWithAsset`…，`warudo-knobs --find-attr TriggerAttribute` 一抓一大把），
+它**不占任何口**。`[FlowInput]` 也能点（接收器的「连接/断开」就是），但它会多一个 flow 出口 socket，
+对"日志"这种节点是多余的 —— 第一版就是那样写的，收口时换成了 `[Trigger]`，现在这个节点**没有任何输出口**。
+⚠️ 查官方用法时属性名要写全：`--find-attr TriggerAttribute`（**带 `Attribute` 后缀**）；
+写成 `Trigger` 会**静默返回空**，我曾据此写出过"Core 里没有 `[Trigger]`"的错结论。
+剪贴板则**只有** `UnityEngine.GUIUtility.systemCopyBuffer` 一家：Warudo 自己没有剪贴板 API
+（两个 DLL 的 `--list Clipboard` 都是空），整个 Managed 目录里也只有 `UnityEngine.IMGUIModule.dll` 带这个名字。
+⚠️ 本地 `tools/compile-check.ps1` 的引用表为此加回了 `UnityEngine.IMGUIModule.dll`。
+
+**两条必须照抄，否则界面不重画**（都实测过，别再改回去）：
+1. **写显示字段要「字段赋值 + `BroadcastDataInput`」**：官方 IL 就是 `stfld Text` 紧接着 `BroadcastDataInput("Text")`。
+   只调 `SetDataInput` 时端口里有新值、**但界面上那块纹丝不动** —— 这一条是最贵的坑，查了两轮。
+2. **输入口用 `object`**：用 `string` 的话，非字符串上游（整张 BlendShapes 表、骨骼数组）根本接不进来。
+
+另外两条踩过的坑：`[Disabled]` 的口**收不到上游写入**（同图上处理链那个普通 `[DataInput]` 收得到）；
+`[Markdown]` 那块**只调 `SetDataInput` 时不会刷新**（v6 实测：端口里有 45 字符、屏上还是旧文字）——
+补上第 1 条的两句才活。完整证据链见 HoUnityTools `docs/pitfalls/WARUDO_INSPECTION.md` §7。
+
+**值是怎么拿到的：不等推，顺着连线直接调上游那个口**（2026-09-25 被逼出来的，定案）。
+实测现场：线**确实**接在「写入」上（`Player.log`：`输入连线：「A」←Ho Face 接收器（VTS 手机）.RawValues`），
+可 `A` 与端口一直是空，而同一根上游喂官方「查看值」有数据。所以不再赌"上游什么时候灌进字段"：
+
+1. `Graph.GetInputDataConnections(this)` → 上游 `DataConnection` → `OutputNode` + `OutputPort`；
+2. 口上挂着求值器：`Warudo.Core.Graphs.DataOutputPort.ComputedValue` 是 **`public Func<Object>`**，
+   `port.ComputedValue()` 一行就是这一帧的值（`connection.OutputPort` 本身就是 `DataOutputPort`）；
+3. 接收器的 `RawValues()` 就是 `HoFaceInputState.Snapshot()` 这种**纯读**，调一次就有值。
+
+端口/字段那条老路留着当**兜底**（真被推过来时照样认）。四点要知道：
+* **显示认几类值**（`Describe`）：字符串原样、"名字 → 值"的表（排序后摊平）、**数组/列表逐项**
+  （`[i] = (x, y, z, w)`）、`Vector3` / `Quaternion` 用 F3；其余才交给 `ToString()`。
+  ⚠️ 数组这一条是**修过的**：`object` 口拿到 `Bone Rotations`（`Quaternion[]`）时，
+  只靠 `ToString()` 屏上只有 `UnityEngine.Quaternion[]` 一行 —— 而官方「检查值」把整个数组序列化成 JSON
+  打了出来，所以"官方的能出值"。差的不是口、是**显示**。
+* **直读的代价（承认的副作用）**：直读 = **替流程图求值一次上游那个口**。接收器的 `RawValues()` 就是
+  `HoFaceInputState.Snapshot()`，**每调一次新建一个字典**（处理链本来要一次，这是额外的第二次）；
+  我们还得把整张表摊成文本（排 65 个键 + 拼 ~1.3 KB 字符串）才能比出"变没变"。
+  → 所以**不是每帧读**，而是每 `ReadInterval`（默认 **0.1 s = 10 Hz**）读一次：观感没差别、垃圾少 6 倍。
+  **真要看每一帧的值，用官方「查看值」节点**（它读字段、不替谁求值）。
+  另外求值时机变成由我们决定（我们的 `OnUpdate`）——我们自己的口都是现场算的纯读、处理链的 `Ensure()`
+  还有 `Time.frameCount` 护栏，所以"时机"没有可观察后果；**但接有副作用的口进来，就等于让我们替你触发它**。
+* **断流不清空**：保持最后一次内容，方便回头复制；重新有值就跟着变。
+
+⚠️ **第 2 步绝不能写成反射**（第一版就是）：`Type.GetMethod(...)` + `MethodInfo.Invoke(...)` 会让 UMod 的安全校验
+**直接毙掉构建** —— `Illegal reference to disallowed namespace: System.Reflection` → `BUILD FAILED!`。
+`ComputedValue` 就是为此存在的非反射入口。
+
+⚠️ **连 `value.GetType().Name` 都不行**（第二版栽在这）：它编译成 `MemberInfo::get_Name`，属于"间接非法引用"
+（`Illegal Type References = '1'` / `Member References = '1'`）。想要类型信息就用 `is` 模式自己列几种认得的。
+本地 `tools/compile-check.ps1` 现在有 **`UMod sandbox lint`** 阶段专门拦这类引用（`-LintOnly` 秒回）——
+这两条都是真机构建烧出来的，完整报错见 HoUnityTools `docs/pitfalls/BUILD_AND_TOOLING.md` §4 / §4.1。
+
+（顺带：官方 `InspectValueNode.OnUpdate` 里那句 `InvokeFlow(null, false)` **不是拉上游** ——
+`warudo-knobs --il` 读出来是 `Graph.InvokeFlow(node, null, false)` → `invokedFlow.Invoke(node, null)`，
+即"把自己接回流程往下游传"。照抄它并不能解释字段为什么空。）
+
+⚠️ **"线明明接了却没值"**：这个节点的端口改过名/类型（`Content`/`Source`(string) → `A`(object)），
+蓝图里**在改名之前接的那条线就是孤儿** —— UI 上可能还画着它（看着接在「写入」上），但求值找不到端口。
+**有了直读之后这不再致命**（孤儿线也读得出值），但线还是重接一遍干净：
+删掉这条线、重新从「接收器 · 原始值」拖到「写入」。
+
+**现在这件事不用猜了 —— 节点自己会说**（2026-09-25 加，`Nodes/HoDebugLogNode.cs`）：
+`OnUpdate` 里每 0.5 秒问一次 `Graph.GetInputDataConnections(this)`（**键就是输入口名**，
+值带 `DataConnection.OutputNode` / `OutputPort` / `InputPort`），只写 Player.log、界面上看不见：
+
+| 日志行 | 意思 |
+|---|---|
+| `[Ho 调试日志] 输入连线：（没有任何输入连线）` | 线根本没接上（或者接在别的节点上） |
+| `[Ho 调试日志] 输入连线：「A」←Ho Face 接收器（VTS 手机）.RawValues` | 接对了（口名是**字段/方法名**，`RawValues` 而不是标签「原始值」；节点名取的是 `Node.Name`） |
+| `[Ho 调试日志] 输入连线：「Content」← …（这个输入口已经不存在了 → 删掉这条线重接）` | 孤儿线（`InputPort` 为 `null`）—— 界面看着接了，其实废了 |
+| `[Ho 调试日志] 还没有值：直读 「…」.RawValues = 0 个键 · 端口 = 空` | 线接对了、口也调到了，**上游自己现在没数据**（每秒一行，只在内容变了时写） |
+| `[Ho 调试日志] 第一次拿到值：431 个字符（直读 「…」.RawValues）` | 通了（有值之后就不再报那两行） |
+
+（`Node.Name` 填的是标题还是内部名**没验过** —— 只用来认人，不参与任何逻辑。孤儿线判定靠的是
+`InputPort == null`，这条是确定的。）
+
+**官方「查看值」是怎么拿值的**（`warudo-knobs --il` 读的它方法体，2026-09-25 本机 DLL）：
+`OnUpdate` 里 `ldfld A` → `JsonConvert.SerializeObject` → `stfld Text` → `BroadcastDataInput("Text")`，
+外加两道 early-return（**只在自己那张图**、**只在本机有 WebSocket 会话**时更新）。
+它**读的是自己的字段** —— 那到底是"谁在什么时候把值写进这个字段"，官方代码里没承诺，
+我们也不再去猜了（见上面的直读方案）；唯一确定的是**字段能拿到值**这件事在官方那张图上成立。
+完整证据链（含 `InvokeFlow` 的 IL、直读的定规）见 HoUnityTools `docs/pitfalls/WARUDO_INSPECTION.md` §7–§8。
+
+### 3.2 未实测（必须标着的）
+
+* **`.controller` 随 mod 打包 + 取回**：一次都没试过（路线图 §7 待办 #2）。
+  已知的那点证据来自**已经删掉的角色探针**：`Plugin.ModHost.SharedAssets`（`UMod.IModAssets`）的
+  `CanLoadAssets=True / AssetCount=2`；**名字枚举不到**（`IModAssets` 没有枚举接口，别人的实现类型
+  也不公开，cast 会 `CS0122`）。已知出路是 `Load<T>(int assetID)` 那一族重载 ——
+  用 `0..AssetCount-1` 逐个试就不必猜名字（**还没试过**，见路线图 §7 待办 #2）。
+  ⚠️ **探针删了之后，暂时没有现成的观察窗**：再验这件事得先加一次性探针、或者直接在做 `HoVtsTrackController`
+  时顺手试。
+  ⚠️ "取回来的运行期类型就是 `RuntimeAnimatorController`"这句**也没验过**（`Load("HoFaceTree")` 从没成功过）。
+* **3 个节点的实际连线效果**（接收器 → 处理链 → 官方三个应用节点）：没在 Warudo 里验证过
+  （路线图 §7 待办 #4「图上换掉接收器后面部照常动」仍是待办）。
+* **「覆盖角色根位置」的权重语义**（值是绝对还是增量）：路线图 §2.2 是**推断**，
+  那一节写了实测判据（权重填 1 + 值填原点，看带位移的动画还动不动）。
+* 已经量出来的那三条（别再当未知）：骨骼数组长度 = `(int)HumanBodyBones.LastBone`、
+  **下标就是 `HumanBodyBones` 枚举值**、`InitialBoneLocalPositions[i] == localPosition`。
+  ⚠️ **但"基准 / 局部还是世界"这半条并没有量出来**：那次量的时候角色**全身旋转都是 identity、也没有根位移**，
+  局部/世界、当前/初始**全都相等**，区分不开（路线图 §5 已按此改正为 ❓）。
+  要量就得让角色带**非 identity 旋转 + 根位移**再跑一次 —— **探针已经删了**，得先加个临时的观察窗。
+
+### 3.3 已知限制（源码里写明的"没做"）
+
+* 修饰符 `Delay` 只有枚举和字段，**没实现**（`Core/HoFaceMiddleware.cs:58`；`Core/HoFaceChain.cs:370`）。
+* `BoneRotations` **只有 `Head` 不是单位四元数**，其余保持 identity = "不改那根骨头"
+  （我们只有脸；`Core/HoFaceChain.cs:293-295`）。
+* 接收器**不线程化**：socket 非阻塞，每帧 `Poll` 把排队的包收掉（`Core/HoVtsIphoneReceiver.cs:27-31`）。
+* 接收器**不做断流回中性**：它只负责收 + 原样交；回中性由下游图按处理链的 `IsTracked` 做
+  （`Nodes/HoFaceReceiverStatusNode.cs:137-140`）。
+* 本机端口用 `49985`：官方 iFacialMocap 接收器资源占 `49983`，要用那个得先关掉它（路线图 §4.7）。
+  **端口被占时会自动往后挪**（49985 → 49986 → …，最多 10 个）—— 见下面的"热更新"那条。
+* **热更新会掐断已连上的接收器**（用户实测：Build 完 Warudo 热更新 → 接收器断连，"重新点连接"绑不上、
+  只能重启 Warudo）。原因是**旧的那个 `UdpClient` 属于被换掉的旧程序集**，它不一定被回收，
+  端口就一直是它占着。两条对策都已落地：
+  1. `HoFaceTrackingPlugin.OnDestroy()`（插件被卸载时）主动 `HoFaceInputState.Stop()` 关掉 socket；
+  2. 接收器自己**端口回退**：绑不上就往后挪一格再试 —— VTS 手机是往**我们请求里列出的端口**回的，
+     所以本机换端口对手机完全透明。状态行会写明："监听 49986 ← …（49985 被占，已自动换端口）"。
+  另外「Connect」现在会把结果写一行 `Player.log`（`Connect → 监听…/启动失败…`），
+  热更新之后"点了没反应"时有现场可看；接收器的状态日志也不再每帧刷（累计帧数不再参与去重比较，
+  实测它曾经把一份 `Player.log` 刷掉一万五千行）。
+* 搁置项：不注册 `CharacterTrackingTemplate`、不做 tracker asset、不依赖官方"一个 mod 带一堆资源"
+  的打包方式（路线图 §6）。
+
+---
+
+## 4. 怎么装 / 怎么验收
+
+### 装
+
+1. Unity 工程（BreakWarudo）里打开 **Mod Settings** 窗口（`UMod.Exporter.SettingsWindow`，
+   见 `Assets/HoWarudoModTests/docs/打包与脚本规范.md:206`）把本 Mod 的**工作区**指到
+   `Assets/HoWarudoModTests/Mods-Ho/HoFaceTracking`，**导出目录**指到 `StreamingAssets/Plugins`
+   （插件类 Mod 的落点，同文档 `:52`）。
+2. 导出前关掉 Warudo、清 `StreamingAssets/Playground` 下的同名脚本（同文档 `:300`）。
+3. 本地检查：`Assets/HoWarudoModTests/tools/compile-check.ps1`
+   —— 它跑两件事：(1) **`UMod sandbox lint`**，拦安全校验会毙掉的引用（`System.Reflection` 一族，含
+   `value.GetType().Name` 这种间接引用；`-LintOnly` 只跑这一步，秒回）；(2) 对着真机 DLL 编一遍。
+   **交付前先跑它** —— 这两步都过不了的东西，真机构建一定过不了。
+
+### 验收（收通 + 处理链）
+
+1. 手机开 VTS，设置第一页底部打开 **3rd Party PC Clients**（它监听的端口默认 `21412`）。
+2. 图上放「Ho Face 接收器（VTS 手机）」：填 `手机 IPv4` → `Connect`。
+   ⚠️ 轮询由**这个节点**驱动，它不在图里就收不到包。
+3. 看接收器的**「状态」**这一个口（`运行中=… · 监听 … · 本帧键 … · 帧 …/坏 … · 距上帧 …`）：
+   * **键数在变** = 收通了（`原始值` 那张表也在随脸变）；
+   * 收不到：先看 `状态` 里有没有"**⚠ 丢了 N 个包，最近来自 …**"那行（手机 IP 填错时会静默丢包）；
+     `距上帧` 变大 = 断流，`状态` 里会写具体原因。
+4. 「Ho Face 处理链」：`输入新鲜` ← 接收器「新鲜」，`原始值` ← 接收器「原始值」（**输入口从上到下就是这个顺序**），
+   `配置文件` 先留空（内置默认）。
+   * 想看输出与诊断：把「状态」接到「Ho调试日志」的**「写入」**口 ——
+     上面那块只读文本就会跟着变，点一下**「复制」**整份进剪贴板。
+     要摊开整张原始表就把接收器的 **`原始值`（字典）**也接过去（那边会排成 `线名 = 值`）；
+     `Bone Rotations` 这类**数组**也能直接接（那边会逐项排成 `[i] = (x, y, z, w)`）。
+     不接也能在 `Player.log` 里看到同一行状态（处理链另有点「重读配置」写进去的整份数值预览）。
+5. 下游把 5 个输出口接到**官方三个应用节点**上 —— **这一步未实测**（§3.2）。
+
+---
+
+## 5. 工程约定与坑（别重踩）
+
+1. **我们的数据一律不用 `JsonUtility`** —— 三次事故都是"编辑器里好好的、播放器里静默丢字段"
+   （写 profile、读 profile、收 VTS 包丢 52 个形态键）。见 `Core/HoJson.cs:18-25` 的原始记录。
+2. **行尾全 LF、`.cs` 无 BOM**：混用行尾 Unity 每次导入都报警告且行号不准；
+   `.research/sync-modcore.ps1` 会强制（`Core/PORTED.md` §4）。
+3. **`tools/compile-check.ps1` 必须保持纯 ASCII**：PowerShell 5.1 对无 BOM 的 `.ps1` 按 ANSI 读，
+   一个中文字节就报 `意外的标记")"`。同一类坑见 HoUnityTools `docs/pitfalls/DOCS_ENCODING.md` §2.2。
+4. **compile-check 的引用表**：`tools/compile-check.ps1:50-68`。里面几项（`AnimationModule` /
+   `JSONSerializeModule` / `UniTask` / `UMod.dll` / `UMod-Interface.dll`）当年是**角色探针**在用
+   （它碰 `CharacterAsset` 与 `Plugin.ModHost.SharedAssets`）；探针删掉之后**本 Mod 已经没人用它们了**，
+   留着是因为"加节点时不用每次都改这张表"。真要收紧就删掉那几行再跑一次 —— 缺引用会报 `CS0234/CS0246`，
+   不会静默出错。（`UnityEngine.IMGUIModule.dll` 为「Ho调试日志」的复制按钮（`GUIUtility.systemCopyBuffer`）
+   重新加回来了 —— 它是整个 Managed 目录里**唯一**带剪贴板 API 的程序集。）
+5. **端口规则**：`[DataInput]` = public 字段、`[DataOutput]` = public 方法、`[FlowInput]` 返回
+   `Continuation`、`[FlowOutput]` 是 `Continuation` 字段、**`[Trigger(order)]` = 纯按钮**（不占任何口）。
+   数据输入别叫 `Name`（撞 `Node` 基类，CS0108）；字段名 `Plugin` 也别用（撞 `Node.Plugin`）。
+   ⚠️ 查官方怎么用某个特性：`warudo-knobs --find-attr <特性全名>` —— **要带 `Attribute` 后缀**
+   （写 `Trigger` 会静默返回空，我曾据此写出过"Core 里没有 `[Trigger]`"的错结论）。
+6. **沙箱列目录只能用 `GetFileEntries`**（`GetFiles` 会引入 `System.IO.SearchOption`，构建被拒）。
+   **`System.Reflection` 整个命名空间同理被拒**，连 `value.GetType().Name`（→`MemberInfo::get_Name`）都算 ——
+   名单与现场在 HoUnityTools `docs/pitfalls/BUILD_AND_TOOLING.md` §4/§4.1；
+   `tools/compile-check.ps1:98-152` 的 `UMod sandbox lint` 就是拿这份名单在本地拦（**加新规则就往那里面加**）。
+7. `[PluginType]` 的 **`NodeTypes` 必须列全**，漏掉的节点不会出现在面板里
+   （`docs/打包与脚本规范.md` §3、§9）。
+
+---
+
+## 6. 下一步
+
+按权威路线图 `docs/FACE_TRACKING_WARUDO_ROUTE.md` §7 的待办推进；当前顺序是：
+
+1. ~~清掉三个临时节点 + 收缩 `NodeTypes`~~ —— **2026-09-25 已做**（§1.1 / §3.1）。
+2. `.controller` 随 mod 打包与 `Load<RuntimeAnimatorController>` 取回：实测（§3.2；探针已删，
+   要验得先加一个临时观察窗）。
+3. 3 个节点的实际连线：接收器 → 处理链 → 官方三个应用节点，在 Warudo 里跑通（§3.2）。
+4. 之后才是拆成 `HoVtsTrack` / `HoVtsTrackController` 两个 Mod 与"中间层配置 + 控制器"那套内部实现。
