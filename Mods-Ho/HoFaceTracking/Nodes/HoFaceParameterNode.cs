@@ -144,6 +144,66 @@ namespace HoFaceTracking.Nodes
                 Debug.Log("[Ho 面捕] 参数处理 " + state
                     + (chain != null && chain.Error != null ? "\n  ⚠ 配置问题：" + chain.Error : ""));
             }
+
+            ProbeIfDue();
+        }
+
+        // ── 临时探针（2026-09-25 加，查完就删）──────────────────────────────────
+        //
+        // 用户实测："接收器输出的值全都在动，配置处理完以后只剩头部旋转和眨眼。"
+        // 光看节点分不清是"原始值没动"还是"我们这一层没搬过去"，所以这里**两侧并排**写日志：
+        //   raw = 接收器推过来的原始字典；参数 = 处理后的出口字典。
+        // 每秒最多一行，只在内容变了的时候写；`raw 键数` 顺便告诉你手机在不在丢追（65 / 15）。
+        // 关掉它：把 `ProbeEnabled` 改成 false（或者直接删掉这一节和 `ProbeIfDue()` 那一行）。
+        // ⚠️ 用 `static readonly` 不用 `const`：const true 会让 `if (!ProbeEnabled) return;` 变成
+        // "无法访问的代码"（CS0162），而且以后改开关还得重编译整份 —— 这里两种都行不通，就用字段。
+        private static readonly bool ProbeEnabled = true;
+
+        private static readonly string[] ProbeRawKeys =
+        {
+            "JawOpen", "MouthSmileLeft", "BrowInnerUp", "EyeBlinkLeft", "EyeSquintLeft",
+            "CheekPuff", "Rotation_x", "Position_x"
+        };
+
+        private float lastProbeTime;
+        private string lastProbeLine;
+
+        private void ProbeIfDue()
+        {
+            if (!ProbeEnabled) return;
+
+            float now = Time.realtimeSinceStartup;
+            if (now - lastProbeTime < 1f) return;
+            lastProbeTime = now;
+
+            var text = new System.Text.StringBuilder();
+            text.Append("[Ho 面捕] 探针 raw ").Append(Raw != null ? Raw.Count : 0).Append(" 键  ");
+
+            for (int i = 0; i < ProbeRawKeys.Length; i++)
+            {
+                string key = ProbeRawKeys[i];
+                float raw = 0f;
+                bool hasRaw = Raw != null && Raw.TryGetValue(key, out raw);
+
+                // 处理后的那个键：`ARKit/<规范名>` 出去时去前缀，所以规范名就是 VtsWire 的反面；
+                // 这里直接用"原始键的小驼峰"当规范名查（我们的调试配置正是 1:1 同名）。
+                string canonical = char.ToLowerInvariant(key[0]) + key.Substring(1);
+                if (key.StartsWith("Rotation_", System.StringComparison.Ordinal)) canonical = "Head/RotX";
+                if (key.StartsWith("Position_", System.StringComparison.Ordinal)) canonical = "Head/PosX";
+
+                float processed = 0f;
+                bool hasProcessed = false;
+                if (chain != null) hasProcessed = chain.Parameters.TryGetValue(canonical, out processed);
+
+                if (i > 0) text.Append("  ");
+                text.Append(key).Append('=').Append(hasRaw ? raw.ToString("F3") : "缺")
+                    .Append("→").Append(hasProcessed ? processed.ToString("F3") : "缺");
+            }
+
+            string line = text.ToString();
+            if (line == lastProbeLine) return;
+            lastProbeLine = line;
+            Debug.Log(line);
         }
 
         /// <summary>拼状态行（**不触发求值** —— 供 <see cref="Resolve"/> 内部与日志用）。</summary>
