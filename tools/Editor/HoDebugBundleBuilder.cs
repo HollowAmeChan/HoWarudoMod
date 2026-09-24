@@ -24,7 +24,6 @@
 // 【没验到的】骨骼那条路：`Animator.GetBoneTransform` 需要 **Humanoid Avatar**，这个最小 rig 没有，
 // 所以 `Bone Rotations` 会全是 identity（我们代码里 null 就到 identity）—— 要验骨骼得塞一个带 Avatar 的人形模型。
 
-using System.Collections.Generic;
 using System.IO;
 using UnityEditor;
 using UnityEditor.Animations;
@@ -87,7 +86,7 @@ namespace Hollow.HoWarudoModTests.Editor
 
             BuildPipeline.BuildAssetBundles(outDir,
                 builds,
-                BuildAssetBundleOptions.ChunkBasedCompression | BuildAssetBundleOptions.ForceRebuild,
+                BuildAssetBundleOptions.ChunkBasedCompression | BuildAssetBundleOptions.ForceRebuildAssetBundle,
                 BuildTarget.StandaloneWindows64);
 
             string bundlePath = Path.Combine(outDir, BundleName);

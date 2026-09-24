@@ -527,6 +527,13 @@ Warudo 的**纯按钮**就是 `[Trigger(order)]` —— 官方节点一大堆（
    （**加新规则就往那里面加**）。
 7. `[PluginType]` 的 **`NodeTypes` 必须列全**，漏掉的节点不会出现在面板里
    （`docs/打包与脚本规范.md` §3、§9）。
+8. **Editor 专用脚本不在 `compile-check` 范围内**（它只编 `Mods/` 与 `Mods-Ho/` 里的运行时代码），
+   所以 `tools/Editor/*.cs` 的 API 名写错只能等 Unity 报错。**省一轮的办法**：对着本机那套编辑器 DLL
+   反射核一遍 —— `D:\Unity\Unity 2021.3.45f2\Editor\Data\Managed\UnityEditor.dll` 与
+   `…\Managed\UnityEngine\UnityEngine.*Module.dll`（2026-09-25 就是这么抓到
+   `BuildAssetBundleOptions.ForceRebuild` 应为 **`ForceRebuildAssetBundle`** 的；
+   ⚠️ 核的时候用 `GetMember` 别用 `GetMethod` —— 重载上 `GetMethod` 会抛 `AmbiguousMatchException`，
+   那样会把"存在"误判成"不存在"）。
 
 ---
 
