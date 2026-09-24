@@ -31,7 +31,8 @@
 //   · 输入口用 `object`：用 `string` 的话，非字符串上游（整张表、数组）根本接不进来。
 //
 // 【为什么"直接读上游"而不是等着被推】（2026-09-25 定案，实测逼出来的）
-//   症状：线**确实接在「写入」上**（`Player.log`：`输入连线：「A」←Ho Face 接收器（VTS 手机）.RawValues`），
+//   症状：线**确实接在「写入」上**（`Player.log`：`输入连线：「A」←Ho Face 接收器（VTS 手机）.RawValues`
+//   —— 那是**当时的节点标题**，现在叫 `HoFaceVTS接收器`），
 //   同一根上游喂官方「查看值」有数据，可这个节点的 `A` 一直是空。
 //   所以改成顺着连线自己去上游那个口要值：
 //     `Graph.GetInputDataConnections(this)` → `DataConnection` → `OutputNode` + `OutputPort`；

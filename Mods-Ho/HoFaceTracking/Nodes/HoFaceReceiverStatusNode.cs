@@ -1,13 +1,14 @@
-// HoFaceReceiverStatusNode.cs  --  面捕接收器：开/关 + 状态与原始帧（本 Mod 的调试入口 1）
+// HoFaceReceiverStatusNode.cs  --  VTS 接收器（面板标题 `HoFaceVTS接收器`）：开/关 + 原始值 + 状态
 //
-// 用法（这就是"第一步"的验收现场）：
-//   蓝图里放这个节点 -> 填手机 IP -> 点 Connect -> 把 Running / KeyCount / Dump
-//   接到 Warudo 的调试节点上看。手机开着 VTS 且打开了「3rd Party PC Clients」，
-//   Dump 里的值就应该随着你的脸变。
+// 用法（"第一步"的验收现场）：
+//   蓝图里放这个节点 -> 填手机 IP -> 点 Connect -> 把 `原始值` 接到「Ho调试日志」上看
+//   （那边把整张表摊成 `线名 = 值`）。手机开着 VTS 且打开了「3rd Party PC Clients」，
+//   表里的值就应该随着你的脸变。**另一种模式**见下面的 `ApiMode`（本机 VB 连我们）。
 //
 // 端口规则（Warudo 强制，见 docs/打包与脚本规范.md §3）：
 //   [DataInput] -> public 字段；[DataOutput] -> public 方法；
-//   [FlowInput] -> 返回 Continuation 的 public 方法；[FlowOutput] -> Continuation 字段。
+//   [FlowInput] -> 返回 Continuation 的 public 方法；[FlowOutput] -> Continuation 字段；
+//   [Trigger] -> 纯按钮（不占口）。
 // ⚠️ 数据输入别叫 Name（撞 Node 基类成员，CS0108）。
 
 using System.Collections.Generic;
@@ -21,7 +22,7 @@ namespace HoFaceTracking.Nodes
 {
     [NodeType(
         Id = "1f4b7c2e-9a3d-4e51-b8c7-2d6a0f9e4b73",
-        Title = "Ho Face 接收器（VTS 手机）",
+        Title = "HoFaceVTS接收器",
         Category = "Ho Face Tracking")]
     public class HoFaceReceiverStatusNode : Node
     {
@@ -106,9 +107,10 @@ namespace HoFaceTracking.Nodes
 
         // ── 输出：只有三个口（2026-09-25 从九个砍到这里）─────────────────────────
         //
-        //   · `原始值`（字典）—— **列表语义，必须单独一个口**：处理链要它，接起来最干净；
-        //   · `新鲜`（布尔）—— 喂处理链的「输入新鲜」，断流回中性靠它（这是个信号，不是给人看的）；
-        //   · `状态`（文本）—— 其余全部合并进这一行。
+        // 顺序用**显式 order**定死，而且**数据口在前、`状态` 在最后**（2026-09-25 用户要求）：
+        //   · `原始值`(10)（字典）—— **列表语义，必须单独一个口**：参数处理要它，接起来最干净；
+        //   · `新鲜`(20)（布尔）—— 喂参数处理的「输入新鲜」，断流回中性靠它（这是个信号，不是给人看的）；
+        //   · `状态`(30)（文本）—— 其余全部合并进这一行，**摆在最下面**（它只是给人看的）。
         //
         // 砍掉的六个（`运行中` / `本帧键数` / `距上帧秒` / `累计帧坏帧` / `外来来源` / `本帧原始值`）
         // 都只是"给人看一眼"，不驱动任何节点；其中「本帧原始值」是「原始值」的文本版，纯重复 ——
@@ -116,11 +118,33 @@ namespace HoFaceTracking.Nodes
         // 状态本身也已经每变一次就往 Player.log 写一行（见 OnUpdate），节点不在图上也能查。
 
         /// <summary>
+        /// **整帧原始值**（线名 → 原值），喂给参数处理节点。名字就是来源发来的样子，
+        /// 没改名、没换算 —— 改名与量纲全在参数处理那份配置文件里。
+        /// </summary>
+        [DataOutput(10)]
+        [Label("原始值")]
+        public Dictionary<string, float> RawValues()
+        {
+            return HoFaceInputState.Snapshot();
+        }
+
+        /// <summary>
+        /// 这一秒还有没有包。参数处理节点的"输入新鲜"接它 —— 断流时那边才能把「有脸」降下去
+        /// （接收器自己**不**做断流处理：它只负责收 + 原样交出，见 HoFaceInputState 的头注释）。
+        /// </summary>
+        [DataOutput(20)]
+        [Label("新鲜")]
+        public bool Fresh()
+        {
+            return HoFaceInputState.IsFresh();
+        }
+
+        /// <summary>
         /// 一行状态：够定性就够了 —— 在不在收、键多少、帧/坏帧、断了多久。
         /// **外来丢包只在真丢了的时候才出现**：手机 IP 填错时包会被静默丢掉，那是唯一线索。
         /// VTS 服务端模式下换成"几个客户端 / 最近一次注入几个参数 / 谁连上来的"。
         /// </summary>
-        [DataOutput]
+        [DataOutput(30)]
         [Label("状态")]
         public string Status()
         {
@@ -161,28 +185,6 @@ namespace HoFaceTracking.Nodes
 
             float age = UnityEngine.Time.realtimeSinceStartup - last;
             return "距上帧 " + age.ToString("F3") + "s";
-        }
-
-        /// <summary>
-        /// 这一秒还有没有包。参数处理节点的"输入新鲜"接它 —— 断流时那边才能把「有脸」降下去
-        /// （接收器自己**不**做断流处理：它只负责收 + 原样交出，见 HoFaceInputState 的头注释）。
-        /// </summary>
-        [DataOutput]
-        [Label("新鲜")]
-        public bool Fresh()
-        {
-            return HoFaceInputState.IsFresh();
-        }
-
-        /// <summary>
-        /// **整帧原始值**（线名 → 原值），喂给参数处理节点。名字就是手机发来的样子，
-        /// 没改名、没换算 —— 改名与量纲全在处理链那份配置文件里。
-        /// </summary>
-        [DataOutput]
-        [Label("原始值")]
-        public Dictionary<string, float> RawValues()
-        {
-            return HoFaceInputState.Snapshot();
         }
 
         [FlowOutput]
