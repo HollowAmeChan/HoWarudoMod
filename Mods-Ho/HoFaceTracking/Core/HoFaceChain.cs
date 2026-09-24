@@ -56,7 +56,18 @@ namespace HoFaceTracking.Core
         private readonly float[] inputSmooth;
         private readonly int[] inputStepIndex;
         private readonly double[] inputStepUntil;
-        private readonly Dictionary<string, int> inputIndex = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        /// <summary>
+        /// 同名的输入行（按声明顺序）。**这就是"方言兼容"的实现方式**：
+        /// 一个规范名可以配多行（例如安卓 VTS 的 `jawOpen` 与 iPhone VTS 的 `JawOpen`），
+        /// 求值时**从最后一行往前找第一个"这一帧真的算出了值"的行**（见 <see cref="Lookup"/>）。
+        ///
+        /// ⚠️ 2026-09-25 修：以前是 `inputIndex[名字] = 行号`（**最后一行无条件生效**），
+        /// 于是"安卓那行有数据、iPhone 那行没数据"时，没数据的那行把有数据的那行顶掉了 ——
+        /// 输入行全部缺键、值恒 0，症状是"**只有 head 系（单行）和眨眼（安卓 payload 里恰好有 PascalCase 的
+        /// `EyeBlinkLeft`）在动**"。**同名多行本来就是为了兼容方言，不该让"没数据的方言"赢。**
+        /// </summary>
+        private readonly Dictionary<string, List<int>> inputRowsByName = new Dictionary<string, List<int>>(StringComparer.Ordinal);
 
         private readonly HoFaceOutput[] outputs;
         private readonly string[] outputKeys;        // 出口用的键（已去 `ARKit/` 前缀）
@@ -101,7 +112,15 @@ namespace HoFaceTracking.Core
                     inputExpressions[i] = parsed;
                 else
                     Note("第 " + (i + 1) + " 条输入行的表达式用不了（" + inputList[i].parameter + "）：" + parseError);
-                inputIndex[inputList[i].parameter] = i;   // 同名多行：最后一行生效（用户覆盖用）
+
+                // 同名多行：全部记下来（顺序 = 声明顺序），求值时再挑"这一帧真有值的那一行"。
+                List<int> sameName;
+                if (!inputRowsByName.TryGetValue(inputList[i].parameter, out sameName))
+                {
+                    sameName = new List<int>();
+                    inputRowsByName[inputList[i].parameter] = sameName;
+                }
+                sameName.Add(i);
             }
 
             var rows = Middleware.outputs ?? new List<HoFaceOutput>();
@@ -223,11 +242,19 @@ namespace HoFaceTracking.Core
             }
         }
 
-        /// <summary>输出行的表达式取值：先看输入行的结果，再回退到原始线名。</summary>
+        /// <summary>
+        /// 输出行的表达式取值：**先在同名的输入行里从后往前找"这一帧真的算出了值"的那一行**
+        /// （方言兼容：安卓命名的行有数据就用它，iPhone 命名的行有数据就用它；两个都有则后声明的赢），
+        /// 一个都没有时才回退到原始线名。
+        /// </summary>
         private float Lookup(string name)
         {
-            int row;
-            if (inputIndex.TryGetValue(name, out row)) return inputValues[row];
+            List<int> rows;
+            if (name != null && inputRowsByName.TryGetValue(name, out rows))
+            {
+                for (int i = rows.Count - 1; i >= 0; i--)
+                    if (inputFresh[rows[i]]) return inputValues[rows[i]];
+            }
             return Raw(current, name);
         }
 
