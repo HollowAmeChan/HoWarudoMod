@@ -28,9 +28,6 @@ namespace HoFaceTracking.Core
         /// <summary>配置文件后缀（与 Unity 侧 <c>HoFaceProfile.Extension</c> 一致）。</summary>
         public const string Extension = ".hoface.json";
 
-        /// <summary>沙箱里一份配置都没有时，写下去的那份内置默认的文件名。</summary>
-        public const string StarterName = "ho-2d-test1.hoface.json";
-
         private sealed class Cached
         {
             public long stamp;
@@ -41,7 +38,6 @@ namespace HoFaceTracking.Core
         private static PluginPersistentDataManager files;
         private static readonly List<FileEntry> entries = new List<FileEntry>();
         private static readonly Dictionary<string, Cached> cache = new Dictionary<string, Cached>(StringComparer.Ordinal);
-        private static bool wroteStarter;
 
         /// <summary>
         /// 上次重新列目录的时刻。
@@ -78,7 +74,6 @@ namespace HoFaceTracking.Core
 
             files = manager;
             cache.Clear();
-            wroteStarter = false;
             Refresh();
         }
 
@@ -115,30 +110,11 @@ namespace HoFaceTracking.Core
                 return;
             }
 
-            if (entries.Count == 0 && !wroteStarter) WriteStarter();
-        }
-
-        /// <summary>
-        /// 沙箱里一份配置都没有时，写一份内置默认下去 —— 用户至少有个能改的样板，
-        /// 也顺便验证了**写**权限（只验证读的话，等真要写的时候才发现不行就晚了）。
-        /// </summary>
-        private static void WriteStarter()
-        {
-            wroteStarter = true;
-            try
-            {
-                files.WriteFile(StarterName, HoFaceProfile.WriteDefaults());
-                var found = files.GetFileEntries("", "*" + Extension, path => true);
-                if (found == null) return;
-                entries.Clear();
-                foreach (var entry in found)
-                    if (entry != null && !string.IsNullOrEmpty(entry.relativePath)) entries.Add(entry);
-                entries.Sort((a, b) => string.CompareOrdinal(a.fileName, b.fileName));
-            }
-            catch (Exception e)
-            {
-                Error = "沙箱里没有配置文件，想写一份默认的又失败了：" + e.Message;
-            }
+            // ⚠️ **不再自动写样板**（2026-09-25 用户明确要求："我不允许他有默认配置"）。
+            // 以前沙箱空着时会写一份内置默认（`StarterName`）下去 —— 那份表还是过时的 iFacialMocap 那套，
+            // 而且"删了配置它又自己冒出来、参数还在输出"这件事就是这里造成的，非常难查。
+            // 现在的规矩：**沙箱里有什么就是什么**，一份都没有 = 参数处理这一层不做事，
+            // 该做什么由节点 `状态` 口里那几句话告诉你（路径 + 可以往里丢什么）。
         }
 
         /// <summary>按名字找一份配置：认 `fileName` 也认 `relativePath`。找不到返回 null。</summary>

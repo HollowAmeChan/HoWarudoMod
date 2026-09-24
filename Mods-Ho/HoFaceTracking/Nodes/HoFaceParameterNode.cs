@@ -90,15 +90,15 @@ namespace HoFaceTracking.Nodes
             var owner = this.Plugin as HoFaceTrackingPlugin;
             HoFaceProfileStore.Attach(owner != null ? owner.Files : null);
 
-            HoFaceMiddleware middleware;
-            string key;
+            HoFaceMiddleware middleware = null;
+            string key = null;
             profileNote = null;
 
             if (string.IsNullOrEmpty(ProfileFile))
             {
-                middleware = HoFaceMiddlewareDefaults.Create();
-                key = "<内置默认>";
-                profileNote = "没填配置文件，用的是内置默认（两种内置协议的输入行 + 52 个 ARKit 直通）。";
+                // **没有内置默认**（2026-09-25 改）。以前留空会用内置默认表（还是过时的 iFacialMocap 那套），
+                // "悄悄拿一份你没指定的配置去算"本身就是坑；现在留空 = 这一层不做事。
+                profileNote = "没填配置文件 —— 这一层不做事（填一份，或者用别的来源直接喂「HoFace控制求解」）。";
             }
             else
             {
@@ -111,16 +111,25 @@ namespace HoFaceTracking.Nodes
                 else
                 {
                     middleware = null;
-                    key = "<读不到>";
                     profileNote = error;
                 }
             }
 
-            // 配置换了（文件名或时间戳变了）才重新编译：表达式只解析一次。
-            if (middleware != null && key != chainKey)
+            if (middleware != null)
             {
-                chain = new HoFaceChain(middleware);
-                chainKey = key;
+                // 配置换了（文件名或时间戳变了）才重新编译：表达式只解析一次。
+                if (key != chainKey)
+                {
+                    chain = new HoFaceChain(middleware);
+                    chainKey = key;
+                }
+            }
+            else
+            {
+                // ⚠️ **读不到 / 没填就把链清掉**。以前这里只改 `profileNote`、保留上一次编译好的那份，
+                // 于是"把配置文件删了、点重读，参数还在照旧输出"—— 用户实测到的就是这个（极难查）。
+                chain = null;
+                chainKey = null;
             }
 
             if (chain != null)
