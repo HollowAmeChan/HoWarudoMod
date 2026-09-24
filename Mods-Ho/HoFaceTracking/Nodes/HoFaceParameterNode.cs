@@ -167,6 +167,7 @@ namespace HoFaceTracking.Nodes
 
         private float lastProbeTime;
         private string lastProbeLine;
+        private string lastProbeKeySignature;
 
         private void ProbeIfDue()
         {
@@ -176,6 +177,21 @@ namespace HoFaceTracking.Nodes
             if (now - lastProbeTime < 1f) return;
             lastProbeTime = now;
 
+            // ① 原始键列表：**只在键集合变了的时候**打一次。
+            // 这是"手机到底发的是哪套名字"的唯一权威答案（比猜 `JawOpen` / `jawOpen` 靠谱）。
+            if (Raw != null)
+            {
+                var keys = new System.Collections.Generic.List<string>(Raw.Keys);
+                keys.Sort(System.StringComparer.Ordinal);
+                string signature = string.Join(",", keys.ToArray());
+                if (signature != lastProbeKeySignature)
+                {
+                    lastProbeKeySignature = signature;
+                    Debug.Log("[Ho 面捕] 探针 raw 键（" + keys.Count + " 个）：" + signature);
+                }
+            }
+
+            // ② 两侧并排的数值对照
             var text = new System.Text.StringBuilder();
             text.Append("[Ho 面捕] 探针 raw ").Append(Raw != null ? Raw.Count : 0).Append(" 键  ");
 
