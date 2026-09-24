@@ -53,6 +53,9 @@ $referenceNames = @(
     'System.Core.dll',
     'UnityEngine.dll',
     'UnityEngine.CoreModule.dll',
+    # AssetBundle: the only runtime container that can carry a RuntimeAnimatorController
+    # (.controller files are an editor-only format). Used by Core/HoFaceController.cs.
+    'UnityEngine.AssetBundleModule.dll',
     'UnityEngine.AnimationModule.dll',
     'UnityEngine.JSONSerializeModule.dll',
     # GUIUtility.systemCopyBuffer -- the only clipboard API reachable from a mod

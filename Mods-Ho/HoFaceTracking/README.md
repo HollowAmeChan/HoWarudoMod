@@ -128,21 +128,64 @@
 **控制求解节点端口**（`HoFaceSolverNode.cs`）
 
 * 输入：`参数`(10) ← 参数处理的 `参数`（**任何能给出同形字典的来源都行**）；`有脸`(20)（**默认 `true`**：
-  不接线时按"一直有脸"处理 —— VB 那条路通常只接 `参数`，而官方那张图要靠 `Is Tracked` 才肯应用）。
+  不接线时按"一直有脸"处理 —— VB 那条路通常只接 `参数`，而官方那张图要靠 `Is Tracked` 才肯应用）；
+  `控制器（可选，AssetBundle 路径）`(30) —— 见 §1.1.2，**留空就是今天的行为**。
+* 按钮：`重读控制器`（`[Trigger(200)]`，同一路径下文件被换掉时用）。
 * 输出（**与官方取数节点同形的 5 个**）：`Is Tracked`（= 上游那个 `有脸` 原样传出）/ `BlendShapes`
   （字典，列表语义）/ `Head Position` / `Root Position` / `Bone Rotations`（数组，列表语义）
-* 输出（诊断，就这一个）：`状态` —— 一行：`参数 N 个键 · 形状 N 个 · 有脸=是/否 · 头姿 (x, y, z)°`
-* ⚠️ **零配置**（红线）：映射/曲线/平滑全在参数处理那一层；这里只做装配。一旦塞进配置，
-  "别的来源跳过参数处理"就不成立了。
+* 输出（诊断，就这一个）：`状态` —— 一行：`参数 N 个键 · 形状 N 个 · 有脸=是/否 · 头姿 (x, y, z)°`；
+  填了控制器时再加一行 `控制器：…`（载入结果 / 失败在哪一步 / 对上几个参数）。
+* ⚠️ **默认零配置**（红线）：不填控制器时只做装配，映射/曲线/平滑全在参数处理那一层。
 * ⚠️ **缺键 = 中性**：字典里没有的键按 0 / identity 处理（VB 那条路不给 `Head/RotX`，头姿就是 identity）。
   保留名以外的键**原样进 `BlendShapes`**（官方那个应用节点只认角色身上真有的形态键，所以是安全的）。
+* 节点销毁时会把影子与 bundle 放掉（`OnDestroy`），别留垃圾。
+
+### 1.1.2 控制器模式（可选，读 AssetBundle，2026-09-25 加）
+
+**想干什么**：让这个节点能"跑一个**真的 AnimatorController**"（混合树那套），于是这个 Mod 变成通用的 ——
+用户给一个控制器，我们喂参数、把结果采出来交给官方那三个应用节点，**完全解耦**。
+
+**⚠️ 两条硬约束（Unity 的，不是我们的选择）**：
+
+1. **`.controller` 文件本身读不了**：它是**编辑器格式**（YAML，靠 GUID/fileID 引用别的资源），
+   播放器里既没有 `UnityEditor.Animations`、也没有运行时反序列化器。运行时能拿到
+   `RuntimeAnimatorController` 的容器只有两种：mod 自带资源（`SharedAssets`，不是解耦）与
+   **AssetBundle**（`AssetBundle.LoadFromFile` + `LoadAllAssets<RuntimeAnimatorController>()`）← 走这条。
+   所以输入是**一个 bundle 文件的路径**。
+2. **bundle 里必须带"控制器原配的那套 rig"**：clip 是按**层级路径**（`Body/Head`）与**属性名**
+   （`blendShape.JawOpen`）绑定的，而**运行时没有 API 能枚举一个 `AnimationClip` 的绑定**
+   （`AnimationUtility` 是编辑器专属）。所以我们**造不出代理**去接住输出 —— 必须用它原配的层级。
+   → bundle 里要打：**一个 GameObject 预制体（rig）+ 一个 `RuntimeAnimatorController`**。
+
+**怎么读结果**（`Animator` **没有**"读混合树输出"的 API —— `GetFloat` 读的是你写进去的输入）：
+`SkinnedMeshRenderer.GetBlendShapeWeight`（Unity 是 0..100 → 我们 /100 成 0..1）+
+`Animator.GetBoneTransform(...)` 取代理骨骼**相对控制器默认姿势**的偏移（`Inverse(rest) * current`，
+因为官方那个口的语义是"偏移：单位四元数 = 不改那根骨头"）。
+**头/根位置仍由保留名装配** —— 控制器多半只管表情与骨骼，位置继续走数据，lipsync 类的控制器才不会把头部追踪弄没。
+
+**几个实现细节**：影子对象用 `HideFlags.HideAndDontSave`；热更新会把静态引用丢掉而对象还活着，所以开跑前
+`Resources.FindObjectsOfTypeAll<Animator>()` 扫一遍清同名旧影子（`GameObject.Find` 找不到这类对象）；
+端口参数只写控制器**真有**的口（`Animator.parameters` 运行时可读），对不上的数量会显示在 `状态` 里；
+`cullingMode = AlwaysAnimate`（影子在屏幕外，默认 culling 会让它不动）。
+
+**❓ 还没验证的（第一次真机跑就看这几条）**：
+
+1. **UMod 的安全校验放不放行 `UnityEngine.AssetBundle`** —— 本地问不出来：我拿
+   `Trivial.CodeSecurity` 的默认规则集做探针，**连 `System.Net.Sockets` 都被判非法**，而它明明放行
+   （我们的接收器就在用）⇒ 那套默认规则**不是** UMod 的真实规则，只能当"否定信号"用。
+   见 HoUnityTools `docs/pitfalls/BUILD_AND_TOOLING.md` §4.2。
+2. **用户自己打的 bundle 能不能 `LoadFromFile`**（UMod 导出的 `sharedassets.bin` 能不能直接读 ❓ 也没验）。
+3. 运行期给隐藏对象加 `Animator` 后的 `parameters` / 求值 / 采样是否照常。
+
+失败时**`状态` 会逐条点名**失败在哪一步（打不开 bundle / 里面没有控制器 / 里面没有 rig），
+`Player.log` 里也有异常本体。先用一个最小 bundle 试通，再上真控制器。
 
 ### 1.2 `Core/` 里有什么
 
-15 个 `.cs` = **8 份从 HoUnityTools 包同步过来** + 7 份这里自己写
-（`HoFaceChain.cs` 参数层求值器 / `HoFaceSolver.cs` 控制求解器 / `HoFaceInputState.cs` 共享状态 /
-`HoVtsIphoneReceiver.cs` UDP 接收器 / `HoFaceProfileStore.cs` 沙箱读写 /
-**`HoVtsApiServer.cs` VTS 服务端** / **`HoVtsApiPacket.cs` 它的报文**）。
+16 个 `.cs` = **8 份从 HoUnityTools 包同步过来** + 8 份这里自己写
+（`HoFaceChain.cs` 参数层求值器 / `HoFaceSolver.cs` 控制求解器 / **`HoFaceController.cs` 控制器模式（AssetBundle）** /
+`HoFaceInputState.cs` 共享状态 / `HoVtsIphoneReceiver.cs` UDP 接收器 / `HoFaceProfileStore.cs` 沙箱读写 /
+`HoVtsApiServer.cs` VTS 服务端 / `HoVtsApiPacket.cs` 它的报文）。
 清单、主本在哪边、怎么重新同步 → **`Core/PORTED.md`**。
 
 ### 1.3 中间层配置与插件沙箱

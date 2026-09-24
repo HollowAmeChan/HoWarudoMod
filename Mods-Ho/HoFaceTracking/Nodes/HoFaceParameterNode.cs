@@ -36,17 +36,19 @@ namespace HoFaceTracking.Nodes
         // ── 输入 ────────────────────────────────────────────────────────────────
         //
         // 顺序用**显式 order**定死（不靠声明顺序的默契）：
-        //   10 `输入新鲜` → 20 `原始值` → 30 `配置文件`
-
-        /// <summary>接收器节点的「新鲜」接这儿。断流时 <c>有脸</c> 就降下去。</summary>
-        [DataInput(10)]
-        [Label("输入新鲜")]
-        public bool RawFresh;
+        //   10 `原始值` → 20 `输入新鲜` → 30 `配置文件`
+        // 2026-09-25 把前两个对调成这个顺序：与**接收器输出的顺序**（`原始值`(10) / `新鲜`(20)）对齐，
+        // 连线时左右两列能对着看。
 
         /// <summary>接收器节点的「原始值」接这儿（线名 → 原值，没改名没换算）。</summary>
-        [DataInput(20)]
+        [DataInput(10)]
         [Label("原始值")]
         public Dictionary<string, float> Raw = new Dictionary<string, float>();
+
+        /// <summary>接收器节点的「新鲜」接这儿。断流时 <c>有脸</c> 就降下去。</summary>
+        [DataInput(20)]
+        [Label("输入新鲜")]
+        public bool RawFresh;
 
         /// <summary>
         /// 沙箱里的配置文件名（例如 <c>ho-2d-test1.hoface.json</c>，子目录写相对路径）。

@@ -52,20 +52,58 @@ namespace HoFaceTracking.Nodes
         [Label("有脸")]
         public bool Tracked = true;
 
+        /// <summary>
+        /// **可选**：一个 **AssetBundle 文件**的路径，里面装着「控制器 + 它绑定的那套 rig 预制体」。
+        /// 留空 = 走"纯装配"（今天的行为，也是 VB 那条路要的）。填了 = 控制器模式（见 `Core/HoFaceController.cs`）。
+        ///
+        /// ⚠️ 为什么是 bundle 而不是 `.controller`：`.controller` 是**编辑器格式**，运行时读不了；
+        /// 而且控制器的 clip 按层级路径绑定，运行时**枚举不了绑定**，所以 bundle 里必须带原配 rig。
+        /// </summary>
+        [DataInput(30)]
+        [Label("控制器（可选，AssetBundle 路径）")]
+        public string ControllerPath = "";
+
         // ── 状态 ────────────────────────────────────────────────────────────────
 
         private readonly HoFaceSolver solver = new HoFaceSolver();
+        private readonly HoFaceController controller = new HoFaceController();
+        private bool controllerActive;
         private int evaluatedFrame = -1;
 
         /// <summary>
         /// 一帧只算一次，且**谁先读谁触发**（同参数处理节点：Warudo 没承诺节点之间的执行顺序，
         /// 所以不在 OnUpdate 里算，而是在输出端口里惰性求值）。
+        ///
+        /// 两条路：
+        ///   · `控制器` 留空 → 纯装配（`HoFaceSolver`）；
+        ///   · `控制器` 填了 → 在隐藏影子上跑那个控制器，**形状与骨骼**从代理上采，
+        ///     **头/根位置**仍由保留名装配（控制器多半只管表情与骨骼，位置继续走数据，
+        ///     lipsync 类的控制器才不会把头部追踪弄没）。
         /// </summary>
         private void Ensure()
         {
             if (evaluatedFrame == Time.frameCount) return;
             evaluatedFrame = Time.frameCount;
-            solver.Solve(Parameters);
+
+            solver.Solve(Parameters);                       // 位置（以及控制器缺席时的形状/骨骼）
+            controllerActive = controller.Prepare(ControllerPath);
+            if (controllerActive) controller.Solve(Parameters);
+        }
+
+        /// <summary>把控制器换掉（同一路径下文件被替换时，靠这个按钮重读）。</summary>
+        [Trigger(200)]
+        [Label("重读控制器")]
+        [Description("丢掉已经载入的控制器，下一帧按路径重新读一次。")]
+        public void ReloadController()
+        {
+            controller.Dispose();
+            evaluatedFrame = -1;
+        }
+
+        /// <summary>节点没了（或者图被关掉）就把影子与 bundle 放掉，别留垃圾。</summary>
+        protected override void OnDestroy()
+        {
+            controller.Dispose();
         }
 
         // ── 输出：与官方取数节点同形的 5 个 ───────────────────────────────────────
@@ -82,7 +120,8 @@ namespace HoFaceTracking.Nodes
         }
 
         /// <summary>
-        /// 融合形状字典。键是**规范名**（Warudo 认的就是这批），值是参数处理算出来的结果。
+        /// 融合形状字典。键是**规范名**（Warudo 认的就是这批）。
+        /// 控制器模式下来自代理网格上的形状名；否则来自参数装配。
         /// </summary>
         [DataOutput]
         [Label("BlendShapes")]
@@ -90,8 +129,9 @@ namespace HoFaceTracking.Nodes
         {
             Ensure();
             // 给副本：端口的值会被下游一直拿着，接内部那个字典就成了活引用。
+            var source = controllerActive ? controller.BlendShapes : solver.BlendShapes;
             var copy = new Dictionary<string, float>();
-            foreach (var pair in solver.BlendShapes) copy[pair.Key] = pair.Value;
+            foreach (var pair in source) copy[pair.Key] = pair.Value;
             return copy;
         }
 
@@ -115,22 +155,24 @@ namespace HoFaceTracking.Nodes
 
         /// <summary>
         /// 骨骼旋转，按 <see cref="HumanBodyBones"/> 索引。
-        /// **我们只有脸，所以只有 `Head` 这一格不是 identity**（其余等于"不改那根骨头"）。
+        /// **偏移语义**：单位四元数 = 不改那根骨头。
+        /// 控制器模式下来自代理骨骼相对"控制器默认姿势"的偏移；否则来自参数里的保留名（只有 `Head` 不是 identity）。
         /// </summary>
         [DataOutput]
         [Label("Bone Rotations")]
         public Quaternion[] BoneRotations()
         {
             Ensure();
-            var copy = new Quaternion[solver.BoneRotations.Length];
-            for (int i = 0; i < copy.Length; i++) copy[i] = solver.BoneRotations[i];
+            var source = controllerActive ? controller.BoneRotations : solver.BoneRotations;
+            var copy = new Quaternion[source.Length];
+            for (int i = 0; i < copy.Length; i++) copy[i] = source[i];
             return copy;
         }
 
         // ── 输出：诊断（就这一条）────────────────────────────────────────────────
 
         /// <summary>
-        /// 一行状态：够定性就够了 —— 收到几个参数、凑出几个形状、有脸没有。
+        /// 一行状态：够定性就够了 —— 收到几个参数、凑出几个形状、有脸没有、控制器在不在。
         /// 想看得更细：把 `BlendShapes` / `Bone Rotations` 接到「Ho调试日志」（那边会把字典与数组摊开）。
         /// </summary>
         [DataOutput]
@@ -138,10 +180,17 @@ namespace HoFaceTracking.Nodes
         public string Status()
         {
             Ensure();
-            return "参数 " + (Parameters != null ? Parameters.Count : 0) + " 个键"
-                + "  ·  形状 " + solver.BlendShapes.Count + " 个"
+
+            string text = "参数 " + (Parameters != null ? Parameters.Count : 0) + " 个键"
+                + "  ·  形状 " + (controllerActive ? controller.BlendShapes.Count : solver.BlendShapes.Count) + " 个"
                 + "  ·  有脸=" + (Tracked ? "是" : "否")
                 + "  ·  头姿 " + EulerText();
+
+            if (!string.IsNullOrEmpty(ControllerPath))
+                text += "\n控制器：" + controller.Status
+                    + (controllerActive ? "  ·  对上参数 " + controller.MatchedParameters + " 个" : "");
+
+            return text;
         }
 
         /// <summary>头姿那三个欧拉角（度），一行看得见。</summary>
