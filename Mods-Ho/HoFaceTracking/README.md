@@ -177,8 +177,9 @@
    `Illegal Assembly Reference = '0'`，被点名的只有 `System.IO`，见下面 §「System.IO 被禁」那条）。
    本地问不出来这件事本身也值得记：`Trivial.CodeSecurity` 的默认规则集**连 `System.Net.Sockets` 都误判**
    （而它明明放行），那套规则只能当"否定信号"，见 HoUnityTools `docs/pitfalls/BUILD_AND_TOOLING.md` §4.2。
-2. **用户自己打的 bundle 能不能 `LoadFromFile`**（UMod 导出的 `sharedassets.bin` 能不能直接读 ❓ 也没验）。
-3. 运行期给隐藏对象加 `Animator` 后的 `parameters` / 求值 / 采样是否照常。
+2. ~~用户自己打的 bundle 能不能 `LoadFromFile`~~ → **✅ 已实测**（用 `tools/Editor/HoDebugBundleBuilder.cs` 打的那份：
+  打开 ✓ 载入控制器 ✓ 载入 rig ✓）。**UMod 导出的 `sharedassets.bin` 能不能直接读**仍然 ❓ 没验。
+3. ~~运行期给隐藏对象加 `Animator` 后的 `parameters` / 求值 / 采样是否照常~~ → **✅ 已实测**（2026-09-25：bundle 载入、参数对上 2 个、形状值采到并随输入变）。
 
 失败时**`状态` 会逐条点名**失败在哪一步（打不开 bundle / 里面没有控制器 / 里面没有 rig），
 `Player.log` 里也有异常本体。先用一个最小 bundle 试通，再上真控制器。
@@ -466,8 +467,11 @@ Warudo 的**纯按钮**就是 `[Trigger(order)]` —— 官方节点一大堆（
   ⚠️ **探针删了之后，暂时没有现成的观察窗**：再验这件事得先加一次性探针、或者直接在做 `HoVtsTrackController`
   时顺手试。
   ⚠️ "取回来的运行期类型就是 `RuntimeAnimatorController`"这句**也没验过**（`Load("HoFaceTree")` 从没成功过）。
-* **这几个节点的实际连线效果**（接收器 → 参数处理 → 控制求解 → 官方三个应用节点）：没在 Warudo 里验证过
-  （路线图 §7 待办 #4「图上换掉接收器后面部照常动」仍是待办）。**VTS 服务端模式**（本机 VB 连我们）同样没跑过。
+* ✅ **这几个节点的实际连线效果已实测跑通一半**（2026-09-25，安卓 VTS + `ho-debug-android.hoface.json`）：
+  接收器 → 参数处理 → 控制求解 **全都在动**（52 个形态键、`Head Position` 有真值），
+  **控制器模式也实测成立**（bundle 载入 ✓ 参数对上 2 个 ✓ 形状采到 ✓）。
+  **仍未测**：① 控制求解那 5 个输出口接**官方三个应用节点**（路线图 §7 待办 #4）；② **VTS 服务端模式**（本机 VB 连我们）；
+  ③ 控制器的**骨骼**那条路（`GetBoneTransform` 需要 Humanoid Avatar，测试 bundle 里没有 ⇒ 骨骼全是 identity）。
 * **「覆盖角色根位置」的权重语义**（值是绝对还是增量）：路线图 §2.2 是**推断**，
   那一节写了实测判据（权重填 1 + 值填原点，看带位移的动画还动不动）。
 * 已经量出来的那三条（别再当未知）：骨骼数组长度 = `(int)HumanBodyBones.LastBone`、
