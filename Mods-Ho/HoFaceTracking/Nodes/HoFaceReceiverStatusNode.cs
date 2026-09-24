@@ -37,6 +37,23 @@ namespace HoFaceTracking.Nodes
         [Label("本机端口")]
         public int LocalPort = 49985;
 
+        /// <summary>
+        /// 勾上 = **VTS 服务端模式**：我们自己当 VTube Studio，让**本机的 VB** 连我们。
+        ///
+        /// 为什么要有它：VBridger 的「发送到 VTube Studio」模式里 VB 是**客户端**，它只会去连一个 VTS 服务端；
+        /// 勾上这个之后用户**不用改自己的 VB 用法**（不必切成 VMC 模式），VB 的客户端列表里会多出我们这一项
+        /// （靠 UDP 47779 的状态广播，见 `Core/HoVtsApiServer.cs` 的头注释）。
+        /// 两种模式**互斥**：点 Connect 时按这个勾选决定起哪一个。
+        /// </summary>
+        [DataInput]
+        [Label("VTS 服务端模式（本机 VB）")]
+        public bool ApiMode;
+
+        /// <summary>VTS 服务端模式监听的端口。**别用 8001**（那是 VTS 自己的），默认 8002。</summary>
+        [DataInput]
+        [Label("API 端口")]
+        public int ApiPort = HoVtsApiServer.DefaultApiPort;
+
         /// <summary>上一次已经打进日志的状态 —— 只在**变了**的时候才写，免得每帧刷屏。</summary>
         private string loggedState;
 
@@ -69,9 +86,12 @@ namespace HoFaceTracking.Nodes
         [FlowInput]
         public Continuation Connect()
         {
-            HoFaceInputState.Start(PhoneIp, PhonePort, LocalPort);
+            if (ApiMode) HoFaceInputState.StartApi(ApiPort);
+            else HoFaceInputState.Start(PhoneIp, PhonePort, LocalPort);
+
             // 把结果写进日志：热更新之后"点了连接没反应"时，这一行就是唯一的现场。
-            Debug.Log("[Ho 面捕] Connect → " + HoFaceInputState.Status
+            Debug.Log("[Ho 面捕] Connect（" + (ApiMode ? "VTS 服务端模式" : "手机模式") + "）→ "
+                + HoFaceInputState.Status
                 + "（运行中=" + HoFaceInputState.Running + "，本机端口 " + HoFaceInputState.LocalPort + "）");
             return Exit;
         }
@@ -98,22 +118,35 @@ namespace HoFaceTracking.Nodes
         /// <summary>
         /// 一行状态：够定性就够了 —— 在不在收、键多少、帧/坏帧、断了多久。
         /// **外来丢包只在真丢了的时候才出现**：手机 IP 填错时包会被静默丢掉，那是唯一线索。
+        /// VTS 服务端模式下换成"几个客户端 / 最近一次注入几个参数 / 谁连上来的"。
         /// </summary>
         [DataOutput]
         [Label("状态")]
         public string Status()
         {
             var text = new StringBuilder();
-            text.Append("运行中=").Append(HoFaceInputState.Running ? "是" : "否");
+            text.Append("来源=").Append(HoFaceInputState.ApiMode ? "VTS 服务端（本机 VB）" : "手机 VTS 直连");
             text.Append("  ·  ").Append(HoFaceInputState.Status);
             text.Append("  ·  本帧键 ").Append(HoFaceInputState.LastKeyCount);
             text.Append("  ·  帧 ").Append(HoFaceInputState.Frames).Append(" / 坏 ").Append(HoFaceInputState.InvalidFrames);
             text.Append("  ·  ").Append(AgeText());
 
-            if (HoFaceInputState.ForeignPackets > 0)
+            if (HoFaceInputState.ApiMode)
+            {
+                text.Append("\n客户端 ").Append(HoFaceInputState.ApiClients).Append(" 个")
+                    .Append("，累计注入 ").Append(HoFaceInputState.ApiInjections).Append(" 次");
+                if (!string.IsNullOrEmpty(HoFaceInputState.ApiLastClient))
+                    text.Append("，最近一个来自 ").Append(HoFaceInputState.ApiLastClient);
+                if (HoFaceInputState.ApiInjections == 0)
+                    text.Append("\n⚠ 还没有客户端连上来 —— 确认 VB 的客户端列表里能选到「"
+                        + HoVtsApiPacket.WindowTitle + "」");
+            }
+            else if (HoFaceInputState.ForeignPackets > 0)
+            {
                 text.Append("\n⚠ 丢了 ").Append(HoFaceInputState.ForeignPackets)
                     .Append(" 个包，最近来自 ").Append(HoFaceInputState.ForeignSource)
                     .Append(" —— 如果这就是你的手机，把「手机 IPv4」改成这个 IP。");
+            }
 
             return text.ToString();
         }
@@ -121,8 +154,12 @@ namespace HoFaceTracking.Nodes
         /// <summary>断流多久了（没收到过任何一帧时要说清楚，别显示一个负数的秒数）。</summary>
         private static string AgeText()
         {
-            if (HoFaceInputState.LastFrameTime <= 0f) return "还没收到过包";
-            float age = UnityEngine.Time.realtimeSinceStartup - HoFaceInputState.LastFrameTime;
+            float last = HoFaceInputState.ApiMode
+                ? HoFaceInputState.ApiLastFrameTime
+                : HoFaceInputState.LastFrameTime;
+            if (last <= 0f) return "还没收到过包";
+
+            float age = UnityEngine.Time.realtimeSinceStartup - last;
             return "距上帧 " + age.ToString("F3") + "s";
         }
 

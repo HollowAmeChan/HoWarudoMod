@@ -50,16 +50,46 @@
 **接收器节点端口**（`HoFaceReceiverStatusNode.cs`）
 
 * 输入：`手机 IPv4` / `手机端口`（默认 `21412`）/ `本机端口`（默认 `49985`）
-* flow：`Connect` / `Disconnect`
+  —— 手机模式用；**`VTS 服务端模式（本机 VB）`**（勾选框）+ `API 端口`（默认 `8002`）—— 本机模式用
+* flow：`Connect` / `Disconnect`（Connect 按上面那个勾选框决定起哪个模式，两个模式**互斥**）
 * 输出（**3 个**）：
   * `原始值`（`Dictionary<string,float>`，**列表语义 → 单独一个口**，喂处理链）；
   * `新鲜`（布尔，喂处理链的「输入新鲜」；断流回中性靠它 —— 这是信号，不是给人看的）；
-  * `状态`（一行文本：在不在收 / 状态说明 / 本帧键 / 帧·坏帧 / 距上帧；**只在真丢包时**多一行来源提示）。
+  * `状态`（一行文本：**来源** / 状态说明 / 本帧键 / 帧·坏帧 / 距上帧；手机模式**只在真丢包时**多一行来源提示，
+    本机模式改显示"客户端几个 / 累计注入几次 / 谁连上来的"）。
 * ⚠️ **轮询是这个节点驱动的**：`OnUpdate` 里调 `HoFaceInputState.Poll()`（`:42-46`）——
-  它不在图里，就没有人收包。
+  它不在图里，就没有人收包 / 没人应答 VB。
 * **2026-09-25 收口**：原来九个口里的 `运行中` / `本帧键数` / `距上帧秒` / `累计帧·坏帧` / `外来来源` /
   `本帧原始值` 都只是"给人看一眼"、不驱动任何节点（`本帧原始值` 还是 `原始值` 的文本版），全并进 `状态`。
   想看整张表就把 `原始值` 接「Ho调试日志」（那边摊成 `线名 = 值`）。
+
+### 1.1.1 VTS 服务端模式（本机 VB 直连，2026-09-25 加）
+
+**为什么**：VBridger 的「发送到 VTube Studio」模式里 **VB 是客户端**，它只会去连一个 VTS **服务端**；
+我们想收这份数据，就得**扮演那个服务端** —— 这样用户**不用改自己的 VB 用法**（不必切成 VMC 模式）。
+和手机那条路**方向是反的**：手机是我们发请求、手机发回来（UDP）；这里是 VB 主动连我们（TCP + WebSocket）。
+
+实现分两个文件（都是本 Mod 自己写的，不在同步清单里）：
+
+| 文件 | 干什么 |
+|---|---|
+| `Core/HoVtsApiServer.cs` | UDP `47779` 每 2 秒广播一份 `VTubeStudioAPIStateBroadcast`（**unsolicited 广播**，VB 靠它列出"可用的 VTS 客户端"）+ TCP 上的 WebSocket 服务端（握手 / 帧解析 / 分片 / ping-pong）+ 插件握手 + 收 `InjectParameterDataRequest` |
+| `Core/HoVtsApiPacket.cs` | 报文解析与应答（**纯静态、不碰 socket**，跟 `HoVtsPacket` 一个路子）：解析 `parameterValues[].id/value` 与 `data.faceFound`；应答 `AuthenticationTokenResponse` / `AuthenticationResponse` / `InjectParameterDataResponse` / `APIStateResponse` |
+
+关键取舍（都写在文件头）：
+
+* **无线程**：跟手机接收器同一套架构（socket 全非阻塞、每帧 `Poll`）—— 少一类崩法，也不碰安全审查边界。
+* **`faceFound` 直接用**：VTS 的注入请求自带这个字段，正好就是处理链要的「有脸」，不用我们猜。
+* **参数名照收**：真 VTS 对"不存在的参数"会报错，我们没有参数表这个概念，所以一律回成功。
+* **端口从 `8002` 起、被占就往后挪**：8001 是 VTS 自己的；挪了也没关系，因为**广播里带的是真实端口**。
+* **SHA-1 是手写的**：WebSocket 握手要 `base64(sha1(key + GUID))`，而 `System.Security.Cryptography`
+  **被 UMod 安全校验禁掉**（本机拿 `Trivial.CodeSecurity` 的默认规则集实测：只用 `SHA1.Create()` 的探针
+  → `Illegal namespace = 1`，同条件控制组 = 0）。手写版本用 RFC 6455 的官方向量自证过
+  （`dGhlIHNhbXBsZSBub25jZQ==` → `s3pPLMBiTxaQ9kYGzzhZRbK+xOo=` ✓，另加 `abc` / 空串两个向量）。
+* ⚠️ **`8001` 上如果 VTS 也在跑**：两边都会广播，VB 的列表里会出现两条 —— 选我们那条（
+  `Ho Face Tracking (Warudo)`，见 `HoVtsApiPacket.WindowTitle`）。
+* ❓ **未在 Warudo 里跑过**：VB 的客户端列表**认不认一个"自称 VTS"的服务端**还没验（这是唯一的外部未知，
+  代码这边该做的都做了：广播字段、握手、token、应答形态都照官方文档）。
 
 **处理链节点端口**（`HoFaceMiddlewareNode.cs`）
 
@@ -83,9 +113,10 @@
 
 ### 1.2 `Core/` 里有什么
 
-12 个 `.cs` = **8 份从 HoUnityTools 包同步过来** + 4 份这里自己写
+14 个 `.cs` = **8 份从 HoUnityTools 包同步过来** + 6 份这里自己写
 （`HoFaceChain.cs` 求值器 / `HoFaceInputState.cs` 共享状态 / `HoVtsIphoneReceiver.cs` UDP 接收器 /
-`HoFaceProfileStore.cs` 沙箱读写）。清单、主本在哪边、怎么重新同步 → **`Core/PORTED.md`**。
+`HoFaceProfileStore.cs` 沙箱读写 / **`HoVtsApiServer.cs` VTS 服务端** / **`HoVtsApiPacket.cs` 它的报文**）。
+清单、主本在哪边、怎么重新同步 → **`Core/PORTED.md`**。
 
 ### 1.3 中间层配置与插件沙箱
 
@@ -118,16 +149,38 @@
 
 ---
 
-## 2. 目标形态（**2 个 mod / 5 个节点**）
+## 2. 目标形态（**2 个 mod / 我们的 3 + 官方 3 = 6 个节点**）
 
 ```
 [HoVtsTrack mod]                       [HoVtsTrackController mod]                [官方节点 ×3]
-  HoVts 接收器   ──原始值 / 新鲜 / 状态──▶ 中间层+控制器（合并成一个节点）  ──▶  设置角色面部追踪 BlendShape 列表
-                （裸线名原样交出）        内部 = 我们的中间层配置 + 控制器          覆盖角色骨骼旋转偏移列表
-                                        输出 = BS 列表 / 骨骼旋转偏移 / 根位置     覆盖角色根位置
+  HoVts 接收器   ──原始值/新鲜/状态──▶  HoFace参数处理 ──参数/有脸──▶ HoFace控制求解 ──▶ 设置角色面部追踪 BlendShape 列表
+                （裸线名原样交出）        （读 *.hoface.json：            （零配置：从参数        覆盖角色骨骼旋转偏移列表
+                                        裸线名→规范名 + 曲线/修饰符）    反求动画输出）          覆盖角色根位置
+  〔同一个接收器的另一个模式〕VTS 服务端模式：VB 的 VTS 输出 ──参数/有脸──▶ HoFace控制求解
 ```
 
-* 完整版见 HoUnityTools `docs/FACE_TRACKING_WARUDO_ROUTE.md` §2（**5 = 我们的 2 个 + 官方那 3 个**）。
+📖 **2026-09-25 新定：`Ho Face 处理链` 拆成 `HoFace参数处理` + `HoFace控制求解`**（还没落地；完整理由、
+接口契约、Id 归属、迁移方法见 HoUnityTools `docs/FACE_TRACKING_WARUDO_ROUTE.md` §2.0.1）。要点：
+
+* 拆点**已经在代码里**：`HoFaceChain.Evaluate` 的三行就是三层（`EvaluateInputs` / `EvaluateOutputs` / `Assemble`）。
+* 两层之间**唯一的接口**：`参数`（`Dictionary<string,float>`，键 = **裸规范名**（`JawOpen`…）+ 保留名
+  `Head/RotX|Y|Z`、`Head/PosX|Y|Z`、`Root/PosX|Y|Z`）与 `有脸`（bool）——
+  **口径对齐官方 `BlendShapes`**，所以别的源（VB 的 VTS 输出、官方面捕源）可以不接我们的中间层，直接喂「控制求解」。
+* **`有脸` 由上游算**（VTS 的判据依赖裸线名 `FaceFound` + 新鲜度，那是协议知识，求解看不到）。
+* **控制求解保持零配置**（一旦塞进曲线/平滑，"跳过中间层"就没意义了）。
+* 迁移时把老 `处理链` 的 `NodeType.Id` 给**控制求解**，指官方三个节点的那 5 根线原样保住。
+
+📖 **第三条来源（同一天定）：给接收器加一个「VTS 服务端」模式，不新增节点。**
+目的是让用户**继续用 VB 原来的 VTS 输出模式**（不逼他换模式）。注意这跟今天的手机路**方向相反**：
+今天是我们发请求、手机发回来（UDP）；VB 的 VTS 模式是 **VB 当客户端去连一个 VTS 服务端**
+（WebSocket + 插件握手 + `InjectParameterDataRequest`），所以我们要实现的是 VTS API 的**服务端**那一侧
+（UDP 47779 广播 + WebSocket 服务端 + 握手 + 解析注入请求；`data.faceFound` 正好就是「有脸」，
+`parameterValues[].id` 正好就是那套 ARKit 名）。
+❓ **做之前要先验**：VB 的客户端列表认不认一个"自称 VTS"的服务端。
+⚠️ **VMC 那条不走**：Warudo 自带 VMC（`GET_VMC_RECEIVER_DATA`，输出 `IsTracked` + `BlendShapes`，形状也对齐），
+技术上最省，但**要用户把 VB 切到 VMC 模式** —— 成本不该转嫁给用户（2026-09-25 否掉，只作后备）。
+
+* 完整版见 HoUnityTools `docs/FACE_TRACKING_WARUDO_ROUTE.md` §2（**6 = 我们的 3 个 + 官方那 3 个**）。
 * 现状离目标的差距：两个 mod 还是一个（`hollow.hofacetracking`）；"控制器"还是**数据树**
   （`Core/HoFaceChain.cs`，没有影子 Animator）。（三个临时节点 2026-09-25 已经清掉，见 §1.1。）
 * 为什么现在没拆成两个 mod：Warudo **每个 Mod 各自编译成一个程序集**，同名类型跨 Mod 是不同 `Type`，
