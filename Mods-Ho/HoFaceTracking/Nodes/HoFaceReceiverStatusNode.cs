@@ -164,7 +164,7 @@ namespace HoFaceTracking.Nodes
         }
 
         /// <summary>
-        /// 这一秒还有没有包。处理链节点的"输入新鲜"接它 —— 断流时链那边才能把 IsTracked 降下去
+        /// 这一秒还有没有包。参数处理节点的"输入新鲜"接它 —— 断流时那边才能把「有脸」降下去
         /// （接收器自己**不**做断流处理：它只负责收 + 原样交出，见 HoFaceInputState 的头注释）。
         /// </summary>
         [DataOutput]
@@ -175,7 +175,7 @@ namespace HoFaceTracking.Nodes
         }
 
         /// <summary>
-        /// **整帧原始值**（线名 → 原值），喂给处理链节点。名字就是手机发来的样子，
+        /// **整帧原始值**（线名 → 原值），喂给参数处理节点。名字就是手机发来的样子，
         /// 没改名、没换算 —— 改名与量纲全在处理链那份配置文件里。
         /// </summary>
         [DataOutput]

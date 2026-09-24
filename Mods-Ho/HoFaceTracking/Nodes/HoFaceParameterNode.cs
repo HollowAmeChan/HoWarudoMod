@@ -1,25 +1,21 @@
-// HoFaceMiddlewareNode.cs  --  处理链节点（本 Mod 的"第二步"）
+// HoFaceParameterNode.cs  --  参数处理（本 Mod 的"第二步"，2026-09-25 从「Ho Face 处理链」拆出来）
 //
-// 【它干的事】
-// 把接收器交出来的**原始线名 + 原值**，按配置文件（`*.hoface.json`）转成 Warudo 认的追踪数据形状。
-// 输出的 5 个端口**与官方/社区接收器 Mod 的取数节点同形**：
-//     IsTracked / BlendShapes / HeadPosition / RootPosition / BoneRotations
-// 于是下游不需要知道我们是谁 —— 直接接官方的
-//     `Set Character Tracking BlendShapes` / `Override Character Bone Rotation Offsets` /
-//     `Override Character Root Position`，**角色在那个节点上选**。
+// 【它干的事】把接收器交出来的**原始线名 + 原值**，按配置文件（`*.hoface.json`）算成**规范参数**：
+//   · 输入行：`规范名 = 曲线(表达式(裸线名…))`
+//   · 输出行：`参数名 = 曲线(表达式(规范名…))`（配置里写 `ARKit/xxx`，出口**去掉前缀**）
+// 然后只交出一份字典（`参数`）和一个判断（`有脸`）。**它不负责装配** —— 那是「HoFace控制求解」的事。
 //
-// 【为什么没有"影子 Animator"】
-// 原来打算内部跑一个隐藏 Animator 吃混合树 .controller。走不通：
-// 插件 Mod 既不能读盘（无 System.IO）也不能带已编译资源，而 Unity 播放器**无法从文件
-// 加载 AnimatorController**（只有 AssetBundle 能）。所以混合树改成**数据**，由
-// Core/HoFaceChain.cs 求值 —— 而它跑的是**从 HoUnityTools 逐字搬来**的那份中间层代码，
-// 所以面板里看到什么，Warudo 里就是什么（见 Core/PORTED.md）。
+// 【为什么拆】让别的来源**跳过这一层**：VB（走接收器的 VTS 服务端模式）、以后别的面捕源，
+// 只要自己给得出"参数 + 有脸"，就能直接喂控制求解。两个节点之间只有一份字典这一条约定。
 //
-// 【配置文件放哪】
-// 插件沙箱目录。面板上的「沙箱目录」端口直接给出路径；沙箱里一份都没有时，插件会写一份
-// 内置默认（ho-2d-test1.hoface.json）当样板。
+// 【`有脸` 为什么在这一层算】判据是"**新鲜** 且 手机报了 `FaceFound ≠ 0`" ——
+// `FaceFound` 是**协议里的裸线名**，求解器只拿到规范名、根本看不到。所以协议知识留在这一层；
+// 求解器那一层不碰它（见 `HoVtsPacket.FaceFoundKey` 的用法）。
 //
-// 【端口规则】[DataInput] = public 字段；[DataOutput] = public 方法。
+// 【配置文件放哪】插件沙箱目录。面板上的 `状态` 端口直接给出路径；沙箱里一份都没有时，
+// 插件会写一份内置默认（ho-2d-test1.hoface.json）当样板。
+//
+// 【端口规则】[DataInput] = public 字段；[DataOutput] = public 方法；[Trigger] = 纯按钮。
 // ⚠️ 数据输入别叫 Name（撞 Node 基类成员，CS0108）。字段名 `Plugin` 也别用（撞 Node.Plugin 属性）。
 
 using System.Collections.Generic;
@@ -32,19 +28,17 @@ using Warudo.Core.Graphs;
 namespace HoFaceTracking.Nodes
 {
     [NodeType(
-        Id = "7c3a91d6-4f2b-48e7-9a15-63d8f0b2c47e",
-        Title = "Ho Face 处理链",
+        Id = "a41d0c86-6f52-4b19-8d3a-5e2c71b904af",
+        Title = "HoFace参数处理",
         Category = "Ho Face Tracking")]
-    public class HoFaceMiddlewareNode : Node
+    public class HoFaceParameterNode : Node
     {
         // ── 输入 ────────────────────────────────────────────────────────────────
         //
         // 顺序用**显式 order**定死（不靠声明顺序的默契）：
         //   10 `输入新鲜` → 20 `原始值` → 30 `配置文件`
-        // 2026-09-25 把前两个对调过：`输入新鲜` 是"这一帧还算不算数"的总闸，摆前面；
-        // `原始值` 是数据本体，紧跟其后。
 
-        /// <summary>接收器节点的「新鲜」接这儿。断流时 <c>IsTracked</c> 就降下去。</summary>
+        /// <summary>接收器节点的「新鲜」接这儿。断流时 <c>有脸</c> 就降下去。</summary>
         [DataInput(10)]
         [Label("输入新鲜")]
         public bool RawFresh;
@@ -136,7 +130,7 @@ namespace HoFaceTracking.Nodes
             if (state != loggedState)
             {
                 loggedState = state;
-                Debug.Log("[Ho 面捕] 处理链 " + state
+                Debug.Log("[Ho 面捕] 参数处理 " + state
                     + (chain != null && chain.Error != null ? "\n  ⚠ 配置问题：" + chain.Error : ""));
             }
         }
@@ -165,7 +159,7 @@ namespace HoFaceTracking.Nodes
             chainKey = null;      // 清掉 key 强制重编译
             evaluatedFrame = -1;
             Ensure();
-            Debug.Log("[Ho 面捕] 处理链 重读：" + StateText() + "\n" + PreviewText());
+            Debug.Log("[Ho 面捕] 参数处理 重读：" + StateText() + "\n" + PreviewText());
             return Exit;
         }
 
@@ -181,25 +175,37 @@ namespace HoFaceTracking.Nodes
             Enter();
         }
 
-        // ── 输出：与官方接收器取数节点同形的 5 个 ─────────────────────────────────
+        // ── 输出：两份，正好是"参数 + 有脸"这一条约定 ─────────────────────────────
 
         /// <summary>
-        /// **丢追判定** —— 这个口是"断流回中性"整条机制的开关，别按"收到包就算追到"写。
-        ///
-        /// 实测过的一次踩坑：手机丢追时**仍然照发那 15 个标量**（Rotation/Position/Eye*/FaceFound/Hotkey/Timestamp），
-        /// 只是不再发 `BlendShapes`（本帧键 65 → 15）。所以
-        /// `Raw.Count &gt; 0` 这种写法在丢追时**依然是 true** —— 而官方那张图正是靠 `IsTracked`
-        /// 走 `SWITCH_*` + `1 - IsTracked` 权重淡到中性的。它一直是 true，就等于"脸没了，
-        /// 表情冻在最后一帧，权重还以为一切正常"。
-        ///
-        /// 所以判据是 **`FaceFound` 那条线名**（手机明确告诉你找到脸没有），
-        /// 协议里没有这个键时才退回"有键就算追到"。
-        /// ⚠️ 中间层那 52 个输入行在缺键时**保持上一帧**（VBridger 语义，这是刻意的），
-        /// 所以"回中性"本来就不该由它们做，而是由下游图按这个 `IsTracked` 做 —— 别把两件事混起来。
+        /// **算出来的参数**（列表语义，单独一个口）：键已去掉 `ARKit/` 前缀，保留名（`Head/RotX`…）原样。
+        /// 这就是交给「HoFace控制求解」的东西 —— 别的来源（VB 等）只要能给出同样形状的字典，就能跳过本节点。
         /// </summary>
         [DataOutput]
-        [Label("Is Tracked")]
-        public bool IsTracked()
+        [Label("参数")]
+        public Dictionary<string, float> Parameters()
+        {
+            Ensure();
+            // 给副本：端口的值会被下游一直拿着，接内部那个字典就成了活引用。
+            var copy = new Dictionary<string, float>();
+            if (chain != null)
+                foreach (var pair in chain.Parameters) copy[pair.Key] = pair.Value;
+            return copy;
+        }
+
+        /// <summary>
+        /// **丢追判定** —— "断流回中性"整条机制的开关，别按"收到包就算追到"写。
+        ///
+        /// 实测过的一次踩坑：手机丢追时**仍然照发那 15 个标量**（Rotation/Position/Eye*/FaceFound/Hotkey/Timestamp），
+        /// 只是不再发 `BlendShapes`（本帧键 65 → 15）。所以 `Raw.Count > 0` 这种写法在丢追时**依然是 true** ——
+        /// 而官方那张图正是靠 `IsTracked` 走 `SWITCH_*` + `1 - IsTracked` 权重淡到中性的。
+        /// 所以判据是 **`FaceFound` 那条线名**（来源明确告诉你找到脸没有）；协议里没有这个键时才退回"有键就算追到"。
+        ///
+        /// ⚠️ 这一层是**协议知识**（`FaceFound` 是裸线名），所以留在这里；求解器只认规范名，看不到它。
+        /// </summary>
+        [DataOutput]
+        [Label("有脸")]
+        public bool Tracked()
         {
             Ensure();
             if (Raw == null || Raw.Count == 0) return false;
@@ -212,63 +218,7 @@ namespace HoFaceTracking.Nodes
             return true;                     // 协议没有这个键：退回"有键就算追到"
         }
 
-        /// <summary>
-        /// 融合形状字典。键是 ARKit 那 52 个的**小驼峰规范名**（Warudo 认的就是这批），
-        /// 值是配置文件里 <c>ARKit/&lt;键&gt;</c> 那些行算出来的结果。
-        /// </summary>
-        [DataOutput]
-        [Label("BlendShapes")]
-        public Dictionary<string, float> BlendShapes()
-        {
-            Ensure();
-            // 给副本：端口的值会被下游一直拿着，接内部那个字典就成了活引用。
-            var copy = new Dictionary<string, float>();
-            if (chain != null)
-                foreach (var pair in chain.BlendShapes) copy[pair.Key] = pair.Value;
-            return copy;
-        }
-
-        /// <summary>头部位置（米）。来自保留名 <c>Head/PosX|PosY|PosZ</c>。</summary>
-        [DataOutput]
-        [Label("Head Position")]
-        public Vector3 HeadPosition()
-        {
-            Ensure();
-            return chain != null ? chain.HeadPosition : Vector3.zero;
-        }
-
-        /// <summary>根位置（米）。来自保留名 <c>Root/PosX|PosY|PosZ</c>。</summary>
-        [DataOutput]
-        [Label("Root Position")]
-        public Vector3 RootPosition()
-        {
-            Ensure();
-            return chain != null ? chain.RootPosition : Vector3.zero;
-        }
-
-        /// <summary>
-        /// 骨骼旋转，按 <see cref="HumanBodyBones"/> 索引。
-        /// **我们只有脸，所以只有 <c>Head</c> 这一格不是 identity**（其余等于"不改那根骨头"）。
-        /// </summary>
-        [DataOutput]
-        [Label("Bone Rotations")]
-        public Quaternion[] BoneRotations()
-        {
-            Ensure();
-            if (chain == null) return new Quaternion[0];
-            var copy = new Quaternion[chain.BoneRotations.Length];
-            for (int i = 0; i < copy.Length; i++) copy[i] = chain.BoneRotations[i];
-            return copy;
-        }
-
-        // ── 输出：我们自己的诊断（2026-09-25 从六个口收成一个）──────────────────────
-        //
-        // 只留 `状态` 这一个文本口。原来那五个（`沙箱目录` / `可用配置` / `配置问题` / `发出内容` /
-        // `数值预览`）全是"给人看一眼"的东西，不驱动任何节点 —— 合并进这一条就够了，
-        // 面板上的口越少，接线越不容易接错。
-        //   · 要看**原始数值**：用上面那五个与官方同形的口（`BlendShapes` 字典、`BoneRotations` 数组…）；
-        //   · 要看**逐帧的值**：把 `状态` 接到「Ho调试日志」；
-        //   · 要看**那份长数值预览**：按节点上的「重读配置」按钮 —— 它会连预览一起写进 Player.log。
+        // ── 输出：诊断（合并成一条）──────────────────────────────────────────────
 
         /// <summary>
         /// 四行状态：配置 + 输入输出行数 + 原始键；问题；沙箱目录；沙箱里现成的配置。
@@ -311,13 +261,17 @@ namespace HoFaceTracking.Nodes
             return text.ToString();
         }
 
-        /// <summary>配置本身的问题（表达式写错、修饰符 kind 不认得、发不出去的参数名）。</summary>
+        /// <summary>配置本身的问题（表达式写错、修饰符 kind 不认得）。</summary>
         private string ProblemsText()
         {
             if (chain == null) return profileNote ?? "没有可用的配置。";
             return chain.Error ?? "没有。";
         }
 
+        /// <summary>
+        /// **用文本摊开数值** —— 不依赖 Warudo 面板怎么渲染 `Quaternion` / `Vector3`。
+        /// 它不再是一个常驻端口（口太多），而是"按「重读配置」按钮时写进 `Player.log`"。
+        /// </summary>
         private string PreviewText()
         {
             if (chain == null) return "（没有链）";
@@ -328,64 +282,22 @@ namespace HoFaceTracking.Nodes
             // （本帧键 65 → 15），所以光看"有没有数据"是看不出丢追的。
             float faceFound = 0f;
             bool reported = Raw != null && Raw.TryGetValue(HoVtsPacket.FaceFoundKey, out faceFound);
-            text.Append("IsTracked = ").Append(IsTracked());
+            text.Append("有脸 = ").Append(Tracked());
             text.Append("   FaceFound = ").Append(reported ? faceFound.ToString("F0") : "（协议没报）");
-            text.Append("   原始键 = ").Append(Raw != null ? Raw.Count : 0);
-            text.Append("   形态键到位 = ").Append(chain.BlendShapes.Count > 0 ? "是" : "否").Append('\n');
+            text.Append("   原始键 = ").Append(Raw != null ? Raw.Count : 0).Append('\n');
 
-            text.Append("HeadRotation 欧拉角 = ").Append(V3(chain.HeadRotation.eulerAngles)).Append('\n');
-            text.Append("HeadRotation 四元数 = ").Append(Q(chain.HeadRotation)).Append('\n');
-            text.Append("单位四元数应是 (0, 0, 0, 1)").Append('\n');
-            text.Append("HeadPosition = ").Append(V3(chain.HeadPosition)).Append('\n');
-            text.Append("RootPosition = ").Append(V3(chain.RootPosition)).Append('\n');
-            text.Append("BoneRotations 长度 = ").Append(chain.BoneRotations.Length).Append('\n');
-
-            AppendBone(text, "Hips", HumanBodyBones.Hips);
-            AppendBone(text, "Spine", HumanBodyBones.Spine);
-            AppendBone(text, "Head", HumanBodyBones.Head);
-            AppendBone(text, "LeftHand", HumanBodyBones.LeftHand);
-            AppendBone(text, "LastBone（应是 identity）", HumanBodyBones.LastBone - 1);
-
-            text.Append("BlendShapes 键数 = ").Append(chain.BlendShapes.Count).Append('\n');
-            text.Append("非零的键：");
-            int shown = 0;
-            foreach (var pair in chain.BlendShapes)
+            text.Append("参数（输出行那份字典，按名字排序）：\n");
+            var keys = new List<string>(chain.Parameters.Keys);
+            keys.Sort(System.StringComparer.Ordinal);
+            if (keys.Count == 0) text.Append("  （一个都没有 —— 原始输入没接、或者配置里一行输出都没有）\n");
+            for (int i = 0; i < keys.Count; i++)
             {
-                if (pair.Value == 0f) continue;
-                if (shown > 0) text.Append(", ");
-                text.Append(pair.Key).Append('=').Append(pair.Value.ToString("F4"));
-                if (++shown >= 12) { text.Append(" …"); break; }
+                text.Append("  ").Append(keys[i]).Append(" = ")
+                    .Append(chain.Parameters[keys[i]].ToString("F4")).Append('\n');
+                if (i >= 63) { text.Append("  …（还有 ").Append(keys.Count - i - 1).Append(" 个）\n"); break; }
             }
-            if (shown == 0) text.Append("（都是 0 —— 原始输入没接或没收到数据）");
 
             return text.ToString();
-        }
-
-        private void AppendBone(System.Text.StringBuilder text, string label, HumanBodyBones bone)
-        {
-            AppendBone(text, label, (int)bone);
-        }
-
-        private void AppendBone(System.Text.StringBuilder text, string label, int index)
-        {
-            if (chain == null || index < 0 || index >= chain.BoneRotations.Length)
-            {
-                text.Append(label).Append(" = （越界）").Append('\n');
-                return;
-            }
-            text.Append(label).Append('[').Append(index).Append("] = ")
-                .Append(Q(chain.BoneRotations[index])).Append('\n');
-        }
-
-        private static string Q(Quaternion q)
-        {
-            return "(" + q.x.ToString("F4") + ", " + q.y.ToString("F4") + ", "
-                + q.z.ToString("F4") + ", " + q.w.ToString("F4") + ")";
-        }
-
-        private static string V3(Vector3 v)
-        {
-            return "(" + v.x.ToString("F4") + ", " + v.y.ToString("F4") + ", " + v.z.ToString("F4") + ")";
         }
     }
 }

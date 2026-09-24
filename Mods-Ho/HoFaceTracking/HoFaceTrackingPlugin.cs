@@ -2,12 +2,17 @@
 //
 // 【这个 Mod 是什么】
 // 面捕：**接收 + 处理**，两半都在这一个 Mod 里。
-//   ① 接收器节点：把手机发来的原始数据收进来，**原样**交出去（不做改名、不做量纲）。
-//   ② 处理链节点：拿配置文件（`*.hoface.json`）把原始线名**硬转**成 Warudo 要的形状，
-//      输出与官方接收器 Mod 的节点同形：IsTracked / BlendShapes / HeadPosition /
-//      RootPosition / BoneRotations。角色不在这边 —— 挂到角色上由官方节点在图上选
+//   ① 接收器节点：把来源发来的原始数据收进来，**原样**交出去（不做改名、不做量纲）。
+//      两种模式：手机（VTS 直连，UDP）与 **VTS 服务端**（本机的 VB 当客户端连我们）。
+//   ② 参数处理节点：拿配置文件（`*.hoface.json`）把原始线名**硬转**成规范参数，
+//      只交出一份字典（`参数`）+ 一个判断（`有脸`）。
+//   ③ 控制求解节点：**从参数反求动画输出**（零配置），输出与官方接收器 Mod 的节点同形：
+//      IsTracked / BlendShapes / HeadPosition / RootPosition / BoneRotations。
+//      角色不在这边 —— 挂到角色上由官方节点在图上选
 //      （`Set Character Tracking BlendShapes` / `Override Character Bone Rotation Offsets` /
 //      `Override Character Root Position`），所以本 Mod 一个角色引用都没有。
+// （②③ 是 2026-09-25 从原来的「Ho Face 处理链」拆出来的：这样别的来源 —— 比如 VB 走 VTS 服务端模式 ——
+//   可以**跳过参数处理**直接喂控制求解。）
 //
 // 【为什么合并成一个 Mod，而不是两个】
 // Warudo 是**每个 Mod 各自编译成一个程序集**，同名类型在两个 Mod 里是**不同的 Type**，
@@ -32,13 +37,14 @@ namespace HoFaceTracking.PluginMod
     [PluginType(
         Id = "hollow.hofacetracking",
         Name = "Ho Face Tracking",
-        Description = "面捕：接收手机发来的原始数据（VTS 手机），再由处理链按配置文件转成 Warudo 的追踪数据形状。",
+        Description = "面捕：接收来源发来的原始数据（VTS 手机 / 本机 VB 的 VTS 服务端模式），再按配置文件转成参数、反求成 Warudo 的追踪数据形状。",
         Version = "0.2.0",
         Author = "Hollow",
         NodeTypes = new[]
         {
             typeof(HoFaceReceiverStatusNode),
-            typeof(HoFaceMiddlewareNode),
+            typeof(HoFaceParameterNode),
+            typeof(HoFaceSolverNode),
             typeof(HoDebugLogNode)
         })]
     public class HoFaceTrackingPlugin : Plugin
@@ -62,7 +68,7 @@ namespace HoFaceTracking.PluginMod
                 Debug.Log("[Ho 面捕] 中间层配置目录：" + HoFaceProfileStore.Root
                     + "（现有 " + HoFaceProfileStore.Entries.Count + " 份配置）");
             else
-                Debug.Log("[Ho 面捕] 插件的沙箱还没就绪，处理链节点会在第一帧再试一次。");
+                Debug.Log("[Ho 面捕] 插件的沙箱还没就绪，参数处理节点会在第一帧再试一次。");
         }
 
         /// <summary>

@@ -27,18 +27,19 @@
 （用脚本的同一套规则——去 BOM、换命名空间、归一成 LF、拼上头——重算一遍再比字节；
 8 份全 identical，包侧主本也是无 BOM UTF-8）。所以现在两边没有分叉。
 
-## 2. 这里自己写的 6 份（**不在**同步清单里）
+## 2. 这里自己写的 7 份（**不在**同步清单里）
 
 | 文件 | 干什么的 |
 |---|---|
-| `HoFaceChain.cs` | 中间层的**运行期求值器**（Warudo 侧）：没有 Animator、没有代理渲染器、没有通道模式，纯求值 |
+| `HoFaceChain.cs` | **参数层**的运行期求值器（Warudo 侧）：裸线名 → 规范参数，出口是一份字典 |
+| `HoFaceSolver.cs` | **控制求解**：从参数反求动画输出（融合形状 / 头姿 / 头位 / 根位 / 骨骼数组）。**零配置** |
 | `HoFaceInputState.cs` | 最近一帧的共享状态 + 接收器统计（接收器写、节点读，唯一交接点）；**两条来源互斥**（手机 / VTS 服务端） |
 | `HoVtsIphoneReceiver.cs` | VTS 手机接收器：UDP + `iOSTrackingDataRequest`，主线程轮询、**没有线程** |
 | `HoFaceProfileStore.cs` | 插件沙箱目录里 `*.hoface.json` 的列表与读取（只能用 `GetFileEntries`） |
 | `HoVtsApiServer.cs` | **VTS 公开 API 的服务端**（给本机 VB 用）：UDP `47779` 状态广播 + WebSocket 服务端 + 握手 + 收注入；握手用的 SHA-1 是手写的（`System.Security.Cryptography` 被禁） |
 | `HoVtsApiPacket.cs` | 上面那个的报文解析与应答（纯静态、不碰 socket，跟 `HoVtsPacket` 一个路子） |
 
-改这 6 份**不用**跑同步；它们不会被脚本碰。
+改这 7 份**不用**跑同步；它们不会被脚本碰。
 
 ## 3. 为什么是"搬"而不是"引用"
 

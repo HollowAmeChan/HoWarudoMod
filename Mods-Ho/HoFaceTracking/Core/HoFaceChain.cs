@@ -1,34 +1,21 @@
-// HoFaceChain.cs  --  中间层的**运行期求值器**（Warudo 侧）
+// HoFaceChain.cs  --  中间层的**运行期求值器**（Warudo 侧）：裸线名 → 规范参数
 //
-// 【为什么要它】
-// 中间层原来打算靠"影子 Animator + 混合树 .controller"求值。走不通，两条路都堵死：
-//   · 插件 Mod 不能用 System.IO，也不能带已编译资源；
-//   · Unity 播放器**不能从文件加载 AnimatorController**（只有 AssetBundle 能），
-//     所以"把 controller 放进沙箱目录再读"也不成立。
-// 于是混合树改成**数据**（行 = 表达式 + 曲线 + 有序修饰符），由这里求值。
+// 【2026-09-25 拆过一次：这里只剩"参数层"】
+// 原来这个文件把两件事混在一起：**求值**（profile 的输入行/输出行）与**装配**（把结果拼成
+// `BlendShapes` / 头姿 / 头位 / 根位 / 骨骼数组那 5 个口）。现在装配搬去了 `HoFaceSolver`
+// —— 于是"参数处理"与"控制求解"变成两个节点，中间只隔一份字典（见 `Nodes/HoFaceParameterNode.cs`）。
+// 拆的缝本来就是现成的：求值三行里 `EvaluateInputs` / `EvaluateOutputs` 留在这儿，`Assemble` 出门。
 //
-// 【它和编辑器那边是同一个人】
-// 输入行/输出行的语义、缺键保持、修饰符顺序、曲线端点夹取，全部由 Core/ 下那几份
-// **从 HoUnityTools 逐字搬来**的文件实现（见 Core/PORTED.md）。这里只补它们没有的
-// 那部分：**没有 Animator、没有代理渲染器、没有通道模式** —— 也就是纯求值。
-// 求值顺序与 HoFaceAnimationSession.Tick 一致：输入行 → 输出行（表达式 → 曲线 → 修饰符）。
+// 【这份求值器做什么】
+//   输入行：`规范名 = 曲线(表达式(裸线名…))`   —— 名字是**手机/B 端发来的原样**
+//   输出行：`参数名 = 曲线(表达式(规范名…))`   —— 名字带 `ARKit/` 前缀或落在保留名表里
+//   交出去：`Parameters`（**出口不带 `ARKit/` 前缀**，保留名原样）—— 这就是两层之间唯一的接口
 //
-// 【和编辑器版的唯一差别：变量只认两层】
-// 编辑器那边是三层（形态键通道 → 输入行 → 合并后的原始线名），因为通道上还挂着
-// "模式 / 输入曲线 / 断流回中性"那套校准。Warudo 侧**没有通道**（那套是设备校准，
-// 留在 Unity 里），所以只剩：
-//   ① **输入行的结果**（`jawOpen`、`headRotX`…；这一帧没来就**保持上一帧**）
-//   ② **原始线名**（`JawOpen`、`head_0`…）—— 想绕过输入行直接用原值也允许
-// 未知名字按 0（求值器不抛异常）。
+// 【缺键语义】表达式引用到的线名只要有一个这一帧没来，这一行就**不写**（值保持上一帧）——
+// 与 VBridger 一致。这条规矩让"两种协议的输入行同时存在"变成安全操作：哪个源在发，只有那一套行会动。
 //
-// 【输出的去向：保留名】
-// 行全是标量，而官方节点要吃 `Dictionary<string,float>`、`Quaternion[]`、`Vector3`。
-// 中间加一层"保留参数名"来拼装（**只有这一张固定表**，没有别的隐式规则）：
-//   ARKit/<键>              → BlendShapes 字典（键一律换成 52 个规范名之一）
-//   Head/RotX|RotY|RotZ     → 头部欧拉角（**度**）→ BoneRotations[Head]
-//   Head/PosX|PosY|PosZ     → HeadPosition（**米**）
-//   Root/PosX|PosY|PosZ     → RootPosition（**米**）
-// 其它参数名照样求值，只是**发不出去** —— 不静默吞掉，节点会把它们列出来。
+// 【为什么没有 Animator / 代理渲染器】纯求值：没有 Animator、没有代理渲染器、没有通道模式，
+// 一份数据进、一份数据出。理由见 Unity 侧的 `FACE_TRACKING_CONTROLLER_STRUCTURE.md` 与本文档头。
 
 using System;
 using System.Collections.Generic;
@@ -36,59 +23,18 @@ using UnityEngine;
 
 namespace HoFaceTracking.Core
 {
-    /// <summary>处理链的运行期实例。一个配置文件一个实例，节点每帧调 <see cref="Evaluate"/>。</summary>
     public sealed class HoFaceChain
     {
         /// <summary>
-        /// 保留参数名 —— **唯一的输出拼装表**。左值是行的 `parameter`，右值是它落到哪个端口。
-        /// 不在这张表里、又不是 `ARKit/` 开头的参数名，就是"求值了但发不出去"。
+        /// 这一帧算出来的**参数**（输出行的结果）：键已去掉 `ARKit/` 前缀，保留名（`Head/RotX`…）原样。
+        /// 这就是交给「HoFace控制求解」的那份字典 —— **两层之间唯一的接口**。
+        /// 除了 52 个融合形状与 9 个保留名，配置里写了别的名字（比如眼睑那两根轴）也会原样在这里，
+        /// 由求解器决定认不认（它只挑保留名 + 其余进 `BlendShapes`）。
         /// </summary>
-        public static class Targets
-        {
-            public const string Arkit = "ARKit/";
+        public readonly Dictionary<string, float> Parameters = new Dictionary<string, float>(StringComparer.Ordinal);
 
-            /// <summary>头部欧拉角，单位**度**，顺序 X→Y→Z（即 <c>Quaternion.Euler(x, y, z)</c>）。</summary>
-            public const string HeadRotX = "Head/RotX";
-            public const string HeadRotY = "Head/RotY";
-            public const string HeadRotZ = "Head/RotZ";
-
-            /// <summary>头部位置，单位**米**，相对角色根。</summary>
-            public const string HeadPosX = "Head/PosX";
-            public const string HeadPosY = "Head/PosY";
-            public const string HeadPosZ = "Head/PosZ";
-
-            /// <summary>根位置，单位**米**。</summary>
-            public const string RootPosX = "Root/PosX";
-            public const string RootPosY = "Root/PosY";
-            public const string RootPosZ = "Root/PosZ";
-
-            /// <summary>三轴一组的保留名，按 X→Y→Z。</summary>
-            public static readonly string[] HeadRotation = { HeadRotX, HeadRotY, HeadRotZ };
-            public static readonly string[] HeadPosition = { HeadPosX, HeadPosY, HeadPosZ };
-            public static readonly string[] RootPosition = { RootPosX, RootPosY, RootPosZ };
-
-            /// <summary>表里所有非 <c>ARKit/</c> 的名字（面板上要展示这张表）。</summary>
-            public static readonly string[] Fixed = {
-                HeadRotX, HeadRotY, HeadRotZ,
-                HeadPosX, HeadPosY, HeadPosZ,
-                RootPosX, RootPosY, RootPosZ
-            };
-        }
-
-        /// <summary>拼装出来的融合形状字典（键 = 52 个规范名之一）。直接给节点当端口值。</summary>
-        public readonly Dictionary<string, float> BlendShapes = new Dictionary<string, float>(StringComparer.Ordinal);
-
-        /// <summary>头部欧拉角（度）。三个保留名都没出现时这个四元数是 identity。</summary>
-        public Quaternion HeadRotation = Quaternion.identity;
-
-        /// <summary>头部位置（米）。</summary>
-        public Vector3 HeadPosition = Vector3.zero;
-
-        /// <summary>根位置（米）。</summary>
-        public Vector3 RootPosition = Vector3.zero;
-
-        /// <summary>按 <see cref="HumanBodyBones"/> 索引的骨骼旋转，默认全是 identity。</summary>
-        public Quaternion[] BoneRotations = new Quaternion[BoneCount];
+        /// <summary>表达式里用的 `ARKit/` 前缀（配置层的写法；出口会去掉它）。</summary>
+        public const string ArkitPrefix = "ARKit/";
 
         /// <summary>有几行输出（面板显示用）。</summary>
         public int OutputRowCount { get { return outputs.Length; } }
@@ -97,13 +43,10 @@ namespace HoFaceTracking.Core
         public int InputRowCount { get { return inputRows.Length; } }
 
         /// <summary>
-        /// 编译期的问题（表达式解析失败、修饰符 kind 不认得、发不出去的参数名）。
+        /// 编译期的问题（表达式解析失败、修饰符 kind 不认得）。
         /// 逐帧求值**不看它** —— 它只用来在面板上点名。
         /// </summary>
         public string Error { get; private set; }
-
-        /// <summary>`HumanBodyBones` 里最后一个枚举值 —— 骨骼数组按它开。</summary>
-        private static readonly int BoneCount = (int)HumanBodyBones.LastBone;
 
         // ── 编译好的行（表达式解析一次，状态数组按行开）────────────────────────
         private readonly HoFaceOutput[] inputRows;
@@ -116,18 +59,16 @@ namespace HoFaceTracking.Core
         private readonly Dictionary<string, int> inputIndex = new Dictionary<string, int>(StringComparer.Ordinal);
 
         private readonly HoFaceOutput[] outputs;
+        private readonly string[] outputKeys;        // 出口用的键（已去 `ARKit/` 前缀）
         private readonly HoFaceExpression[] expressions;
         private readonly float[] outputValues;
         private readonly float[] outputSmooth;
         private readonly int[] stepIndex;
         private readonly double[] stepUntil;
-        private readonly Dictionary<string, int> reservedRow = new Dictionary<string, int>(StringComparer.Ordinal);
-        private readonly int[] arkitRow = new int[HoFaceTrackingChannels.Names.Length];
 
         /// <summary>表达式引用到的变量名（草稿：每行求值时攒一遍，见 <see cref="Evaluate"/>）。</summary>
         private readonly List<string> touched = new List<string>();
 
-        private readonly List<string> unemitted = new List<string>();
         private bool primed;
 
         /// <summary>这一帧的原始线名（<see cref="Lookup"/> 的第二层回退要它）。</summary>
@@ -165,13 +106,13 @@ namespace HoFaceTracking.Core
 
             var rows = Middleware.outputs ?? new List<HoFaceOutput>();
             outputs = new HoFaceOutput[rows.Count];
+            outputKeys = new string[rows.Count];
             expressions = new HoFaceExpression[rows.Count];
             outputValues = new float[rows.Count];
             outputSmooth = new float[rows.Count];
             stepIndex = new int[rows.Count];
             stepUntil = new double[rows.Count];
             for (int i = 0; i < stepIndex.Length; i++) stepIndex[i] = -1;   // −1 = 还没进任何档
-            for (int i = 0; i < arkitRow.Length; i++) arkitRow[i] = -1;
 
             for (int i = 0; i < rows.Count; i++)
             {
@@ -185,36 +126,32 @@ namespace HoFaceTracking.Core
                 else
                     Note("第 " + (i + 1) + " 行的表达式用不了（" + rows[i].parameter + "）：" + parseError);
 
-                if (IsReserved(rows[i].parameter))
-                {
-                    if (!reservedRow.ContainsKey(rows[i].parameter)) reservedRow[rows[i].parameter] = i;
-                }
-                else if (rows[i].parameter.StartsWith(Targets.Arkit, StringComparison.Ordinal))
-                {
-                    string shape = rows[i].parameter.Substring(Targets.Arkit.Length);
-                    int channel = HoFaceTrackingChannels.IndexOf(shape);   // 认 `_L/_R` 别名，键一律换成规范名
-                    if (channel >= 0) arkitRow[channel] = i;
-                    else Note("不认识的融合形状（第 " + (i + 1) + " 行）：" + rows[i].parameter);
-                }
-                else
-                {
-                    if (!unemitted.Contains(rows[i].parameter)) unemitted.Add(rows[i].parameter);
-                }
+                // 出口的键：
+                //   `ARKit/EyeBlink_L` → 查通道表 → **规范名** `eyeBlinkLeft`（认 `_L/_R` 别名，这是老行为，别丢）
+                //   认不出的融合形状名 → 报一句配置问题，键仍用它本身（求解器只认角色真有的键，传下去无害）
+                //   保留名（`Head/RotX` 之类）与其它名字 → 原样
+                outputKeys[i] = OutputKey(rows[i].parameter, i);
             }
+        }
 
-            if (unemitted.Count > 0)
-                Note("以下行算出来了、但这一版**不发给角色**（既不是 ARKit/ 开头、也不在保留表里）："
-                    + string.Join("、", unemitted.ToArray())
-                    + " —— 这不是错：在用控制器（混合树）的版本里，这些正是喂给树的参数（比如眼睑那两根轴）；"
-                    + "当前版本还没有树，所以它们只算不输出。");
+        /// <summary>输出行的键怎么落到出口字典上（见上面那段注释）。</summary>
+        private string OutputKey(string parameter, int rowIndex)
+        {
+            if (string.IsNullOrEmpty(parameter)) return null;
+            if (!parameter.StartsWith(ArkitPrefix, StringComparison.Ordinal)) return parameter;
 
-            BoneRotations = NewBoneRotations();
+            string shape = parameter.Substring(ArkitPrefix.Length);
+            int channel = HoFaceTrackingChannels.IndexOf(shape);
+            if (channel >= 0) return HoFaceTrackingChannels.Names[channel];
+
+            Note("不认识的融合形状（第 " + (rowIndex + 1) + " 行）：" + parameter);
+            return shape;
         }
 
         /// <summary>
         /// 走一帧。**必须先调用它，再读任何结果** —— 结果都是原地更新的。
         /// </summary>
-        /// <param name="rawValues">手机发来的"线名 → 原值"。null 当空字典（所有输入行都保持上一帧）。</param>
+        /// <param name="rawValues">来源发来的"线名 → 原值"。null 当空字典（所有输入行都保持上一帧）。</param>
         /// <param name="deltaTime">平滑修饰符用的步长（秒）。</param>
         /// <param name="now">分档修饰符用的时刻（秒，单调递增即可）。</param>
         public void Evaluate(Dictionary<string, float> rawValues, float deltaTime, double now)
@@ -222,8 +159,22 @@ namespace HoFaceTracking.Core
             current = rawValues;
             EvaluateInputs(rawValues, deltaTime, now);
             EvaluateOutputs(deltaTime, now);
-            Assemble(rawValues);
+            AssembleParameters();
             primed = true;
+        }
+
+        /// <summary>
+        /// 把每一行的结果摊成出口那份字典：键已归一（`ARKit/` 去掉、`_L/_R` 别名换成规范名）。
+        /// </summary>
+        private void AssembleParameters()
+        {
+            Parameters.Clear();
+            for (int i = 0; i < outputs.Length; i++)
+            {
+                string key = outputKeys[i];
+                if (string.IsNullOrEmpty(key)) continue;
+                Parameters[key] = outputValues[i];
+            }
         }
 
         /// <summary>
@@ -272,42 +223,9 @@ namespace HoFaceTracking.Core
             }
         }
 
-        /// <summary>把标量行拼成三个端口要的形状。**原地更新**，不分配新数组。</summary>
-        private void Assemble(Dictionary<string, float> rawValues)
-        {
-            BlendShapes.Clear();
-            for (int channel = 0; channel < arkitRow.Length; channel++)
-                if (arkitRow[channel] >= 0)
-                    BlendShapes[HoFaceTrackingChannels.Names[channel]] = outputValues[arkitRow[channel]];
-
-            HeadRotation = Quaternion.Euler(
-                Reserved(Targets.HeadRotX), Reserved(Targets.HeadRotY), Reserved(Targets.HeadRotZ));
-            HeadPosition = new Vector3(
-                Reserved(Targets.HeadPosX), Reserved(Targets.HeadPosY), Reserved(Targets.HeadPosZ));
-            RootPosition = new Vector3(
-                Reserved(Targets.RootPosX), Reserved(Targets.RootPosY), Reserved(Targets.RootPosZ));
-
-            // 骨骼数组只写头：我们只有脸。其余保持 identity（= 不改那根骨头）。
-            for (int i = 0; i < BoneRotations.Length; i++) BoneRotations[i] = Quaternion.identity;
-            BoneRotations[(int)HumanBodyBones.Head] = HeadRotation;
-        }
-
-        /// <summary>保留名这一帧的值；没有这一行时 0（等于"不改"）。</summary>
-        private float Reserved(string name)
-        {
-            int row;
-            return reservedRow.TryGetValue(name, out row) ? outputValues[row] : 0f;
-        }
-
-        /// <summary>
-        /// 表达式取变量，两层（越靠前越"规范"）：
-        /// ① **输入行的结果**（`jawOpen`、`headRotX`…）—— 这一帧没来就是上一帧的值；
-        /// ② **原始线名**（`JawOpen`、`head_0`…）。
-        /// 未知名字按 0（表达式求值器不抛异常）。
-        /// </summary>
+        /// <summary>输出行的表达式取值：先看输入行的结果，再回退到原始线名。</summary>
         private float Lookup(string name)
         {
-            if (name == null) return 0f;
             int row;
             if (inputIndex.TryGetValue(name, out row)) return inputValues[row];
             return Raw(current, name);
@@ -391,20 +309,6 @@ namespace HoFaceTracking.Core
             }
 
             return next >= 0 && steps[next] != null ? steps[next].target : 0f;
-        }
-
-        private static Quaternion[] NewBoneRotations()
-        {
-            var array = new Quaternion[BoneCount];
-            for (int i = 0; i < array.Length; i++) array[i] = Quaternion.identity;
-            return array;
-        }
-
-        private static bool IsReserved(string name)
-        {
-            for (int i = 0; i < Targets.Fixed.Length; i++)
-                if (Targets.Fixed[i] == name) return true;
-            return false;
         }
 
         private void Note(string message)
