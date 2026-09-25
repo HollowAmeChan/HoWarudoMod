@@ -108,6 +108,9 @@ namespace HoFaceTracking.Core
             {
                 inputRows[i] = inputList[i];
                 if (inputList[i] == null || string.IsNullOrEmpty(inputList[i].parameter)) continue;
+                // **这一行的默认值**（照 VBridger 的 `defaultValue`）：那条线名一帧都没来过时，
+                // 这个规范名就是它 —— 摆成初值，于是"没数据"不再等于隐式 0。
+                inputValues[i] = inputList[i].defaultValue;
                 HoFaceExpression parsed;
                 string parseError;
                 if (HoFaceExpression.TryParse(inputList[i].expression, out parsed, out parseError))
@@ -232,8 +235,12 @@ namespace HoFaceTracking.Core
             {
                 var output = outputs[row];
                 if (output == null) { outputValues[row] = 0f; continue; }
-                float value = expressions[row] != null ? expressions[row].Evaluate(Lookup) : 0f;
-                value = output.Transform(value);
+                // 表达式留空 = **常量行**（门控那种"不需要输入、总有默认值"的东西就靠它）；
+                // 表达式写了但解析不了时也退回这个作者声明过的默认值（比魔法 0 诚实）。
+                // ⚠️ 常量行**不过曲线**：作者填 1 就该得 1（曲线是给"算出来的值"整形用的）。修饰符照走。
+                float value = expressions[row] != null
+                    ? output.Transform(expressions[row].Evaluate(Lookup))
+                    : output.defaultValue;
                 outputValues[row] = ApplyModifiers(row, output, value, deltaTime, now);
             }
         }
