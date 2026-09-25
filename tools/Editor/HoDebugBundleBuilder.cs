@@ -1,6 +1,6 @@
-// HoDebugBundleBuilder.cs  --  调试用：造一个「控制器 + rig」的 AssetBundle，给「HoFace控制求解」的控制器模式用
+// HoDebugBundleBuilder.cs  --  调试用：造一个「控制器 + rig」的 AssetBundle，给「HoFace控制求解」用
 //
-// 【为什么需要它】控制器模式的输入是一个 **AssetBundle 路径**（不是 `.controller` 文件 —— 那是编辑器格式，
+// 【为什么需要它】节点的输入是一个 **AssetBundle**（不是 `.controller` 文件 —— 那是编辑器格式，
 // 运行时读不了），而且 bundle 里必须带**控制器绑定的那套 rig**（运行时枚举不了 `AnimationClip` 的绑定，
 // 所以造不出代理去接住输出）。这个脚本就是把这两样东西造出来、打成一个文件。
 //
@@ -12,10 +12,15 @@
 //     四个角各一条 clip、每个 clip **同时**写两个形状。这样"哪个形状该动"完全由参数定，没有层的歧义。
 //     ⚠️ 第一版是"两层、每层一条 1D 树"（一层一个参数）：两层都 `Override`、状态默认 `WriteDefaultValues = 1`，
 //        互相把对方的属性写回默认值 ⇒ 实测 `mouthSmileLeft` 恒 0、`jawOpen` 只剩极小值。别改回去。
-//   · 打成一个 bundle：`<工程根>/_hodebug/hoface-controller-test.bundle`
 //
-// 【怎么用】菜单 `HoWarudoModTests/造调试用控制器 bundle（AssetBundle）` → 把弹出来/日志里的路径
-// 粘进「HoFace控制求解」的 `控制器（可选，AssetBundle 路径）` → 看节点 `状态` 那一行：
+// 【⚠️ 落在哪：直接打进 **Warudo 的插件沙箱**】（`SandboxFolder`，与中间层配置同一个目录）
+//   运行时读的就是那儿 —— 节点上那个下拉列表（`[AutoComplete]`）列出的就是沙箱里的 `*.bundle`，
+//   选中的是个**文件名**，不是绝对路径（`HoFaceController.Prepare` 用 `ReadFileBytes` + `LoadFromMemory`）。
+//   2026-09-25 之前打到工程根的 `_hodebug/`，而 Warudo 读沙箱 ⇒ "重打了却没生效"，白查两轮。
+//   装 Warudo 时（或路径不同）才退回 `_hodebug/`，并且日志里会明确警告"Warudo 读不到这里"。
+//
+// 【怎么用】菜单 `HoWarudoModTests/造调试用控制器 bundle（AssetBundle）` → 在「HoFace控制求解」的
+// `控制器` 下拉里选中它 → 按「重读控制器」（**同名文件被替换时 `Prepare` 认不出来，必须按**）→ 看 `状态`：
 //   已载入：hoface-controller-test.bundle（参数 2 个，形状 2 个，网格 1 个）
 //   然后 `BlendShapes` 里应出现 `jawOpen` / `mouthSmileLeft`，值跟着输入变（形状权重 0..100 → 我们/100 成 0..1）。
 //
@@ -36,7 +41,17 @@ namespace Hollow.HoWarudoModTests.Editor
     public static class HoDebugBundleBuilder
     {
         private const string WorkFolder = "Assets/HoWarudoModTests/_debugbundle";
-        private const string OutputFolder = "_hodebug";
+
+        /// <summary>没装 Warudo（或者路径不一样）时的落点。**这不是运行时读的目录**，只是别丢文件。</summary>
+        private const string FallbackFolder = "_hodebug";
+
+        /// <summary>
+        /// Warudo 的插件沙箱目录（`PluginPersistentDataManager.GetBasePath()` 就是它）。
+        /// 中间层配置也在这儿 —— 两边同一套目录，节点上那个下拉列表列的就是这里。
+        /// </summary>
+        private const string SandboxFolder =
+            "D:/Steam/steamapps/common/Warudo/Warudo_Data/StreamingAssets/Plugins/Data/hollow.hofacetracking";
+
         private const string BundleName = "hoface-controller-test.bundle";
 
         /// <summary>参数名 = blend shape 名 = 规范参数名（控制器模式就是按名字对上的）。</summary>
@@ -72,9 +87,15 @@ namespace Hollow.HoWarudoModTests.Editor
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
 
-            // 打 bundle：ChunkBasedCompression（= LZ4）—— LoadFromFile 读得了；**别用默认 LZMA**
-            string projectRoot = Directory.GetParent(Application.dataPath).FullName;
-            string outDir = Path.Combine(projectRoot, OutputFolder);
+            // 打 bundle：ChunkBasedCompression（= LZ4）—— 我们走 `LoadFromMemory`，LZ4 读得了；
+            // **别用默认 LZMA**（那份要整段解压，内存路线更容易炸）。
+            //
+            // ⚠️ 落点直接是 **Warudo 的插件沙箱**（跟中间层配置同一个目录）——
+            // 2026-09-25 那次"重打了却没生效"就是因为打到了工程根的 `_hodebug/`，
+            // 而 Warudo 读的是沙箱；现在菜单一按就到位。装 Warudo 时不存在才退回 `_hodebug`。
+            string outDir = Directory.Exists(SandboxFolder)
+                ? SandboxFolder
+                : Path.Combine(Directory.GetParent(Application.dataPath).FullName, FallbackFolder);
             Directory.CreateDirectory(outDir);
 
             var builds = new[]
@@ -92,10 +113,16 @@ namespace Hollow.HoWarudoModTests.Editor
                 BuildTarget.StandaloneWindows64);
 
             string bundlePath = Path.Combine(outDir, BundleName);
+            bool inSandbox = string.Equals(outDir, SandboxFolder, System.StringComparison.OrdinalIgnoreCase);
             Debug.Log("[HoDebugBundle] bundle 好了：" + bundlePath
-                + "\n  把它粘进「HoFace控制求解」的 `控制器（可选，AssetBundle 路径）`"
+                + (inSandbox
+                    ? "\n  ✅ 已经直接落在 Warudo 的插件沙箱里 —— 不用再复制。"
+                    : "\n  ⚠️ 没找到 Warudo 沙箱，落在 `" + FallbackFolder + "/`（**Warudo 读不到这里**，"
+                        + "要自己复制到插件沙箱）。沙箱路径见「HoFace参数处理」的 `状态` 口。")
+                + "\n  然后：「HoFace控制求解」的 `控制器` 下拉里选它 → 按「重读控制器」"
                 + "\n  期望状态：已载入：hoface-controller-test.bundle（参数 " + Parameters.Length
-                + " 个，形状 " + Parameters.Length + " 个，网格 1 个）");
+                + " 个，形状 " + Parameters.Length + " 个，网格 1 个）"
+                + "\n  ⚠️ 同名文件被替换时 `Prepare` 认不出来，必须按「重读控制器」。");
             return bundlePath;
         }
 

@@ -23,6 +23,7 @@ using HoFaceTracking.Core;
 using HoFaceTracking.PluginMod;
 using UnityEngine;
 using Warudo.Core.Attributes;
+using Warudo.Core.Data;
 using Warudo.Core.Graphs;
 
 namespace HoFaceTracking.Nodes
@@ -51,11 +52,13 @@ namespace HoFaceTracking.Nodes
         public bool RawFresh;
 
         /// <summary>
-        /// 沙箱里的配置文件名（例如 <c>ho-2d-test1.hoface.json</c>，子目录写相对路径）。
-        /// **留空 = 用内置默认**（两份内置协议各一套输入行 + 52 个 ARKit 直通）。
+        /// 沙箱里的配置文件名（例如 <c>ho-2d-test1.hoface.json</c>，子目录写相对路径）——
+        /// **下拉列表里选**（`[AutoComplete]`，列出沙箱里的 `*.hoface.json`）。
+        /// **留空 = 这一层不做事**（2026-09-25 起没有内置默认；见 `HoFaceProfileStore.Refresh` 的注释）。
         /// </summary>
         [DataInput(30)]
         [Label("配置文件")]
+        [AutoComplete(nameof(AutoCompleteProfile), true, "")]
         public string ProfileFile = "";
 
         // ── 状态 ────────────────────────────────────────────────────────────────
@@ -158,6 +161,29 @@ namespace HoFaceTracking.Nodes
         }
 
         // ── 手动催一下（这个节点没有 flow 触发，所以给个按钮）──────────────────────
+
+        /// <summary>
+        /// `配置文件` 那个下拉列表的数据源：沙箱里的 `*.hoface.json`。
+        /// 与「HoFace控制求解」的 `控制器` 下拉同一个套路（`AutoCompleteList.Single`，
+        /// `value` = 要填进字段的**相对路径**，不是绝对路径）。
+        /// </summary>
+        public AutoCompleteList AutoCompleteProfile()
+        {
+            var entries = new List<AutoCompleteEntry>();
+
+            // 列目录的前提是句柄已接上；没接上就先接一次（这里不依赖 Ensure 跑过）
+            var owner = this.Plugin as HoFaceTrackingPlugin;
+            HoFaceProfileStore.Attach(owner != null ? owner.Files : null);
+
+            var found = HoFaceProfileStore.Entries;
+            if (found != null)
+                foreach (var entry in found)
+                    if (entry != null && !string.IsNullOrEmpty(entry.relativePath))
+                        entries.Add(new AutoCompleteEntry { label = entry.fileName, value = entry.relativePath });
+
+            if (entries.Count == 0) entries.Add(new AutoCompleteEntry { label = "（沙箱里没有 *.hoface.json）", value = "" });
+            return AutoCompleteList.Single(entries);
+        }
 
         /// <summary>
         /// 强制重新列沙箱目录、重新读配置、重新编译链。用于"刚往沙箱里丢了新文件"或

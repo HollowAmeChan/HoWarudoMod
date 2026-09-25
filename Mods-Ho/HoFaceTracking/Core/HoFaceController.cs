@@ -1,4 +1,4 @@
-// HoFaceController.cs  --  「跑一个真的 AnimatorController」：从文件路径读 bundle，在隐藏影子上跑，采集结果
+// HoFaceController.cs  --  「跑一个真的 AnimatorController」：从**插件沙箱**读 bundle，在隐藏影子上跑，采集结果
 //
 // 【为什么要这个】一直想把"控制器"（混合树那套）包进控制求解节点，让这个 Mod 变成通用的：
 // 用户给一个控制器，我们负责喂参数、把结果采出来交给官方那三个应用节点。**完全解耦**。
@@ -7,8 +7,16 @@
 // `.controller` 是**编辑器格式**（YAML，引用别的资源靠 GUID/fileID），播放器里既没有
 // `UnityEditor.Animations`、也没有运行时反序列化器。运行时能拿到 `RuntimeAnimatorController` 的容器只有两种：
 //   ① mod 自带资源（导出进 `sharedassets.bin`，用 `Plugin.ModHost.SharedAssets` 取）—— 不是解耦（用户得改 mod 工作区）；
-//   ② **AssetBundle**（`AssetBundle.LoadFromFile` + `LoadAllAssets<RuntimeAnimatorController>()`）← 本文件走这条。
-// 所以本节点的输入是**一个 bundle 文件的路径**，不是 `.controller`。
+//   ② **AssetBundle**（本文件走这条）。所以节点上是**选一个 bundle**，不是填 `.controller`。
+//
+// 【路径口径：跟中间层配置**同一套**（2026-09-25 统一）】
+//   两边都只认**插件沙箱里的文件名**：`PluginPersistentDataManager`（节点从 `HoFaceTrackingPlugin.Files` 递进来）。
+//   读盘走沙箱 API（`ReadFileBytes`），**不用 `System.IO`**（那整个命名空间被 UMod 禁；
+//   `PluginPersistentDataManager.GetFiles/GetDirectories` 的签名里带 `System.IO.SearchOption`，同样别碰），
+//   拿到字节后 `AssetBundle.LoadFromMemory(byte[])` —— 实测（本地 lint + 真机）放行。
+//   ⚠️ 为什么不再用"绝对路径 + `LoadFromFile`"：那样用户得自己把 bundle 复制到某个目录，
+//   而菜单打出来的文件落在工程根 `_hodebug/`，**不是** Warudo 读的沙箱 —— 2026-09-25 为此白查了两轮
+//   （现象：状态/日志里 `state=<哈希>` 从头到尾不变）。现在两边同一套目录、同一个下拉列表，选不到不存在的文件。
 //
 // 【⚠️ 硬约束二：bundle 里必须带"控制器绑定的那套 rig"】
 // 控制器的 clip 是按**层级路径**（`Body/Head`）和**属性名**（`blendShape.JawOpen`）绑定的，而
@@ -29,17 +37,20 @@
 //   对象还活着，所以在开始跑之前先 `Resources.FindObjectsOfTypeAll<Animator>()` 扫一遍、把**同名的**旧影子清掉
 //   （`GameObject.Find` 找不到 HideAndDontSave 的东西，别用它）。
 //
-// 【❓ 还没验证的（第一次真机跑就看这几条）】
-//   ① UMod 的安全校验放不放行 `UnityEngine.AssetBundle`（历史：`System.Reflection`/`System.Security.Cryptography`
-//      都被禁；`System.Net.Sockets`、`UnityEngine.GUIUtility` 是放行的）；
-//   ② 用户自己打的 bundle 能不能 LoadFromFile；
-//   ③ 运行期给隐藏对象加 `Animator` 后 `parameters` / 求值 / 采样是否照常。
+// 【✅ 实测状态（2026-09-25）】
+//   ① UMod 的安全校验放行 `UnityEngine.AssetBundle`（那次构建报 `Illegal Assembly Reference = '0'`，
+//      唯一被点名的是 `System.IO`）；② bundle 读得了、控制器与 rig 都载得进来；
+//   ③ 隐藏影子上的 `Animator` 照常跑：参数写进去 → 混合树解算 → 从网格采回来整条通
+//      （实测 `写入 jawOpen 0.186 / mouthSmileLeft 0.096 → 采到 0.2673 / 0.2194`，两个形状都跟着输入动）。
+//   ❓ 仍未验：真控制器（别人的 VRM 控制器）、骨骼那条（要 Humanoid Avatar）。
 //   失败时状态文字会**逐条点名**失败在哪一步（打不开 bundle / 里面没有控制器 / 里面没有 rig）。
 
 using System;
 using System.Collections.Generic;
 using System.Text;
 using UnityEngine;
+using Warudo.Core.Data;
+using Warudo.Core.Persistence;
 
 namespace HoFaceTracking.Core
 {
@@ -49,10 +60,10 @@ namespace HoFaceTracking.Core
         private const string RigName = "HoFaceSolverRig";
 
         private AssetBundle _bundle;
-        private string _bundlePath;
+        private string _bundleName;                      // 沙箱里的**文件名**（不是绝对路径）
         private GameObject _rig;
         private Animator _animator;
-        private RuntimeAnimatorController _controller;   // 载入进来的那个（自检要报它的层结构）
+        private RuntimeAnimatorController _controller;   // 载入进来的那个（自检要报它的 clip）
         private readonly List<SkinnedMeshRenderer> _meshes = new List<SkinnedMeshRenderer>();
         private readonly List<string> _shapeNames = new List<string>();
         private readonly Dictionary<string, float> _shapes = new Dictionary<string, float>(StringComparer.Ordinal);
@@ -66,7 +77,8 @@ namespace HoFaceTracking.Core
 
         public bool Ready { get { return _animator != null; } }
 
-        public string BundlePath { get { return _bundlePath; } }
+        /// <summary>当前用的文件名（沙箱里的名字，不是绝对路径）。没选就是空串。</summary>
+        public string BundleName { get { return _bundleName; } }
 
         /// <summary>人看的短状态（节点 `状态` 口直接拼这句话）。</summary>
         public string Status { get; private set; }
@@ -122,25 +134,59 @@ namespace HoFaceTracking.Core
             Status = "未启用";
         }
 
-        /// <summary>按路径准备（路径没变就什么都不做）。返回是否可用。</summary>
-        public bool Prepare(string path)
+        /// <summary>
+        /// 按**沙箱里的文件名**准备（同一个文件就什么都不做）。返回是否可用。
+        ///
+        /// 配置文件名没变时直接返回 —— 所以**换了同名文件要按节点上的「重读控制器」**
+        /// （`Prepare` 认不出内容被替换）。这也是 2026-09-25 那次"重打了 bundle 却没生效"的一半原因。
+        /// </summary>
+        /// <param name="files">插件沙箱句柄（节点每帧从 `HoFaceTrackingPlugin.Files` 递进来）。</param>
+        /// <param name="name">沙箱里的文件名（节点上那个下拉列表选出来的）。</param>
+        public bool Prepare(PluginPersistentDataManager files, string name)
         {
-            if (string.IsNullOrEmpty(path))
+            if (string.IsNullOrEmpty(name))
             {
                 Dispose();
-                Status = "未启用";
+                Status = "没选控制器——在 `控制器` 那个下拉里选一个 bundle（沙箱里有几个就列几个）";
                 return false;
             }
 
-            if (_animator != null && path == _bundlePath) return true;   // 已经就绪
+            if (files == null)
+            {
+                Dispose();
+                Status = "插件的沙箱还没就绪（节点拿不到插件句柄，下一帧再试）";
+                return false;
+            }
+
+            if (_animator != null && name == _bundleName) return true;   // 已经就绪
 
             Dispose();
-            _bundlePath = path;
+            _bundleName = name;
 
-            // ① 打开 bundle
+            // ① 读沙箱里的字节。**不用 `System.IO`**（整个命名空间被禁），
+            //    也不用 `GetFiles/GetDirectories`（签名里带 `System.IO.SearchOption`）。
+            byte[] bytes;
             try
             {
-                _bundle = AssetBundle.LoadFromFile(path);
+                bytes = files.ReadFileBytes(name);
+            }
+            catch (Exception e)
+            {
+                Status = "读不到这个文件：" + name + "（" + Short(e) + "）";
+                Debug.LogException(e);
+                return false;
+            }
+
+            if (bytes == null || bytes.Length == 0)
+            {
+                Status = "沙箱里没有这个文件（或者它是空的）：" + name;
+                return false;
+            }
+
+            // ② 从内存开 bundle（绝对路径那条路已废：文件和配置同一个目录，见文件头）
+            try
+            {
+                _bundle = AssetBundle.LoadFromMemory(bytes);
             }
             catch (Exception e)
             {
@@ -152,11 +198,11 @@ namespace HoFaceTracking.Core
 
             if (_bundle == null)
             {
-                Status = "打不开 bundle（路径对不对？它要是 Unity 打的 AssetBundle）";
+                Status = "打不开 bundle（它要是 Unity 打的 AssetBundle，别把 .controller 直接丢进来）";
                 return false;
             }
 
-            // ② 找控制器
+            // ③ 找控制器
             RuntimeAnimatorController controller = null;
             var controllers = _bundle.LoadAllAssets<RuntimeAnimatorController>();
             if (controllers != null && controllers.Length > 0) controller = controllers[0];
@@ -169,7 +215,7 @@ namespace HoFaceTracking.Core
 
             _controller = controller;
 
-            // ③ 找 rig（控制器原配的那套层级；运行时枚举不了 clip 绑定，所以必须用户给）
+            // ④ 找 rig（控制器原配的那套层级；运行时枚举不了 clip 绑定，所以必须用户给）
             GameObject prefab = null;
             var prefabs = _bundle.LoadAllAssets<GameObject>();
             if (prefabs != null && prefabs.Length > 0) prefab = prefabs[0];
@@ -180,7 +226,7 @@ namespace HoFaceTracking.Core
                 return false;
             }
 
-            // ④ 清掉热更新留下的旧影子，再实例化新的
+            // ⑤ 清掉热更新留下的旧影子，再实例化新的
             CleanupStrays();
             _rig = UnityEngine.Object.Instantiate(prefab);
             _rig.name = RigName;
@@ -198,7 +244,7 @@ namespace HoFaceTracking.Core
 
             ParameterCount = _animator.parameters != null ? _animator.parameters.Length : 0;
 
-            // ⑤ 收集要采的网格与形状名
+            // ⑥ 收集要采的网格与形状名
             _meshes.Clear();
             _shapeNames.Clear();
             _rig.GetComponentsInChildren(true, _meshes);
@@ -210,7 +256,7 @@ namespace HoFaceTracking.Core
             }
 
             _restCaptured = false;
-            Status = "已载入：" + FileName(path) + "（参数 " + ParameterCount + " 个，形状 "
+            Status = "已载入：" + name + "（参数 " + ParameterCount + " 个，形状 "
                 + _shapeNames.Count + " 个，网格 " + _meshes.Count + " 个）";
             Report = BuildReport();
 
@@ -289,6 +335,54 @@ namespace HoFaceTracking.Core
         }
 
         /// <summary>
+        /// 沙箱里可选的控制器列表（节点上那个下拉列表的数据源）。
+        ///
+        /// ⚠️ 只认 `*.bundle`：`PluginPersistentDataManager.GetFileEntries(relativePath, searchPattern, predicate)`
+        /// 的签名里**没有任何 `System.IO` 类型**，所以它是唯一能列目录的入口
+        /// （`GetFiles`/`GetDirectories` 的第三个参数是 `System.IO.SearchOption`，一碰就构建失败）。
+        /// `value` = 要**填进字段的字符串**（`FileEntry.fileName`，不是绝对路径）；`label` 也用它。
+        /// 列不出来时返回一条说明性的选项 —— 一个空的列表在 UI 上什么都看不见，等于"没反应"。
+        /// </summary>
+        public static List<AutoCompleteEntry> SandboxBundles(PluginPersistentDataManager files)
+        {
+            var entries = new List<AutoCompleteEntry>();
+            if (files == null)
+            {
+                entries.Add(Entry("（插件沙箱还没就绪）"));
+                return entries;
+            }
+
+            var names = new List<string>();
+            try
+            {
+                var found = files.GetFileEntries("", "*.bundle", path => true);
+                if (found != null)
+                    foreach (FileEntry file in found)
+                        if (file != null && !string.IsNullOrEmpty(file.fileName)) names.Add(file.fileName);
+                names.Sort(StringComparer.Ordinal);
+            }
+            catch (Exception e)
+            {
+                Debug.LogException(e);
+            }
+
+            if (names.Count == 0)
+            {
+                entries.Add(Entry("（沙箱里没有 *.bundle）"));
+                return entries;
+            }
+
+            for (int i = 0; i < names.Count; i++) entries.Add(Entry(names[i]));
+            return entries;
+        }
+
+        /// <summary>一条下拉选项：`label` 与 `value` 都是文件名（选出来就是要填的值）。</summary>
+        private static AutoCompleteEntry Entry(string name)
+        {
+            return new AutoCompleteEntry { label = name, value = name };
+        }
+
+        /// <summary>
         /// 把"上一帧写进去的参数"拼成一行（前 <see cref="ReportLimit"/> 个，超出只报数）。
         /// 事件/Trigger 类参数不算"对上"（它们不是这一帧的值，我们不主动触发）。
         /// </summary>
@@ -306,23 +400,6 @@ namespace HoFaceTracking.Core
             if (matched > shown) builder.Append(" …共 ").Append(matched).Append(" 个");
 
             return builder.ToString();
-        }
-
-        /// <summary>
-        /// 从路径里抠出文件名（只为状态文字好看）。
-        /// ⚠️ **不能用 `System.IO.Path.GetFileName`** —— UMod 的安全校验禁掉整个 `System.IO` 命名空间
-        /// （2026-09-25 实测：真机构建报 `Illegal reference to disallowed namespace: System.IO`
-        /// + `Illegal reference to disallowed type: System.IO.Path`，就毙在这一句上）。
-        /// 所以这里自己按分隔符切一刀。
-        /// </summary>
-        private static string FileName(string path)
-        {
-            if (string.IsNullOrEmpty(path)) return "";
-
-            int cut = path.LastIndexOf('/');
-            int backslash = path.LastIndexOf('\\');
-            if (backslash > cut) cut = backslash;
-            return cut >= 0 && cut + 1 < path.Length ? path.Substring(cut + 1) : path;
         }
 
         /// <summary>

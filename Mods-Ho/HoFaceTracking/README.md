@@ -107,7 +107,8 @@
 **参数处理节点端口**（`HoFaceParameterNode.cs`）
 
 * 输入（顺序用**显式 `[DataInput(order)]` 定死**，不靠声明顺序的默契）：
-  `输入新鲜`(10) ← 接收器「新鲜」；`原始值`(20) ← 接收器「原始值」；`配置文件`(30)（沙箱里的文件名，可留空）。
+  `输入新鲜`(10) ← 接收器「新鲜」；`原始值`(20) ← 接收器「原始值」；
+  `配置文件`(30) —— **下拉列表**（`[AutoComplete]`，列出沙箱里的 `*.hoface.json`，可留空）。
 * 输出（**3 个**）：
   * `参数`（`Dictionary<string,float>`，列表语义）—— 输出行的结果，**键已去掉 `ARKit/` 前缀**，
     保留名（`Head/RotX`…）原样；配置里写了别的名字（比如眼睑两根轴）也原样在这儿；
@@ -131,17 +132,37 @@
 **控制求解节点端口**（`HoFaceSolverNode.cs`）
 
 * 输入：`参数`(10) ← 参数处理的 `参数`（**任何能给出同形字典的来源都行**）；`有脸`(20)（**默认 `true`**：
-  不接线时按"一直有脸"处理 —— VB 那条路通常只接 `参数`，而官方那张图要靠 `Is Tracked` 才肯应用）；
-  `控制器（可选，AssetBundle 路径）`(30) —— 见 §1.1.2，**留空就是今天的行为**。
-* 按钮：`重读控制器`（`[Trigger(200)]`，同一路径下文件被换掉时用）。
-* 输出（**与官方取数节点同形的 5 个**）：`Is Tracked`（= 上游那个 `有脸` 原样传出）/ `BlendShapes`
+  不接线时按"一直有脸"处理 —— 官方那张图要靠 `Is Tracked` 才肯应用）；
+  `控制器`(30) —— **必填**，一个**下拉列表**（`[AutoComplete(nameof(AutoCompleteController), true, "")]`），
+  选项 = **插件沙箱里的 `*.bundle`**。见 §1.1.2。
+* 按钮：`重读控制器`（`[Trigger(200)]`，**同名文件被替换时用** —— `Prepare` 认不出内容变了）。
+* 输出（**与官方取数节点同形的 5 个**）：`Is Tracked`（= `有脸` **且** 控制器可用）/ `BlendShapes`
   （字典，列表语义）/ `Head Position` / `Root Position` / `Bone Rotations`（数组，列表语义）
-* 输出（诊断，就这一个）：`状态` —— 一行：`参数 N 个键 · 形状 N 个 · 有脸=是/否 · 头姿 (x, y, z)°`；
-  填了控制器时再加一行 `控制器：…`（载入结果 / 失败在哪一步 / 对上几个参数）。
-* ⚠️ **默认零配置**（红线）：不填控制器时只做装配，映射/曲线/平滑全在参数处理那一层。
-* ⚠️ **缺键 = 中性**：字典里没有的键按 0 / identity 处理（VB 那条路不给 `Head/RotX`，头姿就是 identity）。
-  保留名以外的键**原样进 `BlendShapes`**（官方那个应用节点只认角色身上真有的形态键，所以是安全的）。
+* 输出（诊断，就这一个）：`状态` —— 多行：`参数 N 个键 · 形状 N 个 · 有脸=是/否 · 头姿 (x, y, z)°`，
+  下面固定一行 `控制器：…`（载入结果 / 失败在哪一步 / 对上几个参数），控制器就绪时再加 `写入 …` 与 `自检 …`。
+* ⚠️ **没有控制器就不吐任何输出**（2026-09-25 用户定，见 §1.1.3）：`控制器` 留空、或载入失败时，
+  5 个口**全中性**（`BlendShapes` 空字典 / 位置零 / 骨骼 identity / `Is Tracked` 假），
+  `状态` 里那句 `⚠ 没有可用的控制器…` 就是"为什么不吐"的说明书。
+  **不用旧值兜底、也没有"把参数原样端出去"的退路** —— 那条退路不报错，画面看着像在工作，最难查。
+* ⚠️ **缺键 = 中性**：控制器里没写到的那些形状键，采回来就是默认值（0）。
 * 节点销毁时会把影子与 bundle 放掉（`OnDestroy`），别留垃圾。
+
+### 1.1.3 ✅ 控制器是**唯一**的求值路径（2026-09-25 定，当天落地）
+
+**为什么砍掉"没控制器就直接装配输出"**：那条退路等于把**量纲 / 曲线 / 名字**的锅全甩给下游，
+而且它**不报错** —— 画面看着像在工作，实际全错。用户原话："不填就不给任何输出并且报错就好"。
+（"VB 自己算好直接喂"也**不构成**理由：那只是**跳过中间层**，依旧要喂给本节点，所以依旧要控制器。）
+
+改动落在两处：
+
+* `Nodes/HoFaceSolverNode.cs`：`Ensure()` 只跑控制器那条路；控制器没就绪时**不算**，
+  由输出口统一给中性值（`BlendShapes()` 返回空字典、`HeadPosition()/RootPosition()` 给零、
+  `IsTracked()` = `有脸 && controllerActive`）。`IsTracked` 必须跟着假，
+  否则官方那条链会拿"全中性"当"追到了"去应用 —— 头/根回零 = 角色突然弹回原姿势，比不应用更难看。
+* `Core/HoFaceSolver.cs` **只负责头/根位置**（参数里的保留名）。它的 `BlendShapes` / `BoneRotations`
+  现在**没有消费者**（没控制器时节点直接给空字典 / identity），留着是因为"保留名 → 头姿"这条路要它。
+  ⚠️ 也就是说：**控制器管形状与骨骼，求解器只管位置**。
+
 
 ### 1.1.2 控制器模式（可选，读 AssetBundle，2026-09-25 加）
 
@@ -153,12 +174,31 @@
 1. **`.controller` 文件本身读不了**：它是**编辑器格式**（YAML，靠 GUID/fileID 引用别的资源），
    播放器里既没有 `UnityEditor.Animations`、也没有运行时反序列化器。运行时能拿到
    `RuntimeAnimatorController` 的容器只有两种：mod 自带资源（`SharedAssets`，不是解耦）与
-   **AssetBundle**（`AssetBundle.LoadFromFile` + `LoadAllAssets<RuntimeAnimatorController>()`）← 走这条。
-   所以输入是**一个 bundle 文件的路径**。
+   **AssetBundle**（`LoadAllAssets<RuntimeAnimatorController>()`）← 走这条。
+   所以输入是一个 **bundle**，不是 `.controller`。
 2. **bundle 里必须带"控制器原配的那套 rig"**：clip 是按**层级路径**（`Body/Head`）与**属性名**
    （`blendShape.JawOpen`）绑定的，而**运行时没有 API 能枚举一个 `AnimationClip` 的绑定**
    （`AnimationUtility` 是编辑器专属）。所以我们**造不出代理**去接住输出 —— 必须用它原配的层级。
    → bundle 里要打：**一个 GameObject 预制体（rig）+ 一个 `RuntimeAnimatorController`**。
+
+**路径口径：与中间层配置同一套**（2026-09-25 统一）——两边都只认**插件沙箱里的文件名**：
+
+* 读盘走插件沙箱 API：`PluginPersistentDataManager.ReadFileBytes(name)`（节点从 `HoFaceTrackingPlugin.Files`
+  递进来），**不碰 `System.IO`**（整个命名空间被 UMod 禁）。
+* 拿到字节后 `AssetBundle.LoadFromMemory(byte[])` —— 本地 lint 与真机都放行。
+  ⚠️ 列目录只能用 `GetFileEntries(relativePath, searchPattern, predicate)`：
+  `GetFiles`/`GetDirectories` 的第三个参数是 **`System.IO.SearchOption`**，一碰就构建失败
+  （见 `Core/HoFaceProfileStore.cs` 头注释与 `Core/PORTED.md`）。
+* 节点上那个 `控制器` 是**下拉列表**（`AutoCompleteAttribute`）：列出沙箱里的 `*.bundle`，
+  选中的是**文件名**。官方节点用它 200+ 处（`CharacterAsset.Source`、`BlendShapeEntry.BlendShape`…），
+  列表类型是 `AutoCompleteList` / `AutoCompleteCategory` / `AutoCompleteEntry { label, value }`。
+  ⚠️ 官方那些 `AutoComplete*` 方法是 **private** 的（实测 `LoadPendulumPhysicsProfileNode.AutoCompleteProfile`），
+  我们写 **public** —— `[AutoComplete(nameof(X))]` 按名字找，可见性不该有硬要求，选 public 是为了少一条坑。
+  `AutoCompleteList` 只能用 `AutoCompleteList.Single(IEnumerable<AutoCompleteEntry>)` 造
+  （它没有公开列表构造函数）。「HoFace参数处理」的 `配置文件` 用的是同一套。
+* 为什么不再用"绝对路径 + `LoadFromFile`"：菜单打出来的文件以前落在工程根 `_hodebug/`，
+  **不是** Warudo 读的沙箱 —— 2026-09-25 为此白查两轮（现象：`state=<哈希>` 从头到尾不变）。
+  现在打一次就落在沙箱、下拉里直接能选（§1.7）。
 
 **怎么读结果**（`Animator` **没有**"读混合树输出"的 API —— `GetFloat` 读的是你写进去的输入）：
 `SkinnedMeshRenderer.GetBlendShapeWeight`（Unity 是 0..100 → 我们 /100 成 0..1）+
@@ -211,12 +251,12 @@
    `Illegal Assembly Reference = '0'`，被点名的只有 `System.IO`，见下面 §「System.IO 被禁」那条）。
    本地问不出来这件事本身也值得记：`Trivial.CodeSecurity` 的默认规则集**连 `System.Net.Sockets` 都误判**
    （而它明明放行），那套规则只能当"否定信号"，见 HoUnityTools `docs/pitfalls/BUILD_AND_TOOLING.md` §4.2。
-2. ~~用户自己打的 bundle 能不能 `LoadFromFile`~~ → **✅ 已实测**（用 `tools/Editor/HoDebugBundleBuilder.cs` 打的那份：
-  打开 ✓ 载入控制器 ✓ 载入 rig ✓）。**UMod 导出的 `sharedassets.bin` 能不能直接读**仍然 ❓ 没验。
-3. ~~运行期给隐藏对象加 `Animator` 后的 `parameters` / 求值 / 采样是否照常~~ → **✅ 已实测到"参数写进去"这一步**
-   （2026-09-25：bundle 载入、`Animator.parameters` 读到 2 个、`SetFloat` 每帧都写）；⚠️ **"形状真被推到网格上"当时没验成**
-   —— 那份调试 bundle 是两层结构，`mouthSmileLeft` 恒 0，分不清是没写进去还是没推到网格（见 §1.6），
-   构造器已改成单层，**结论待重打 bundle 后复验**。
+2. ~~用户自己打的 bundle 能不能读进来~~ → **✅ 已实测**（两种读法都通了：绝对路径时代的 `LoadFromFile`，
+   以及现在的沙箱 `ReadFileBytes` + `LoadFromMemory`）；控制器 ✓ rig ✓ 网格 ✓。
+   **UMod 导出的 `sharedassets.bin` 能不能直接读**仍然 ❓ 没验。
+3. ~~运行期给隐藏对象加 `Animator` 后的 `parameters` / 求值 / 采样是否照常~~ → **✅ 已实测全通**
+   （2026-09-25：参数对上 2 个、`SetFloat` 写进去、混合树解算、`GetBlendShapeWeight` 采回来；
+   单层树那版两个形状都跟着输入动 —— 见 §1.6 的结案数据）。
 
 失败时**`状态` 会逐条点名**失败在哪一步（打不开 bundle / 里面没有控制器 / 里面没有 rig），
 `Player.log` 里也有异常本体。先用一个最小 bundle 试通，再上真控制器。
@@ -320,14 +360,18 @@
 * 它造什么：一个三角形网格 + 两个 blend shape（名字故意 = 规范参数名 `jawOpen` / `mouthSmileLeft`）、
   一个 rig 预制体（`Animator` + `SkinnedMeshRenderer`、`updateWhenOffscreen`）、
   一个**单层控制器**：一条 `FreeformDirectional2D` 混合树、四个角各一条 clip（每个 clip **同时**写两个形状），
-  打成一个 `_hodebug/hoface-controller-test.bundle`（**ChunkBasedCompression**；`LoadFromFile` 读得了，别用默认 LZMA）。
+  打成一个 `hoface-controller-test.bundle`（**ChunkBasedCompression**，别用默认 LZMA —— 我们走
+  `LoadFromMemory`，那份要整段解压，内存路线更容易炸）。
+* **落在哪**：直接打进 **Warudo 的插件沙箱**（`SandboxFolder` 常量 = 跟中间层配置同一个目录），
+  也就是节点那个下拉列表列的地方 —— 按完菜单**不用再复制**。没装 Warudo 时才退回 `_hodebug/`，
+  并在日志里明确警告"Warudo 读不到这里"。
 * ⚠️ **第一版是"两层、每层一条 1D 树"（一层一个参数），它是个坑，别改回去**：两层都是 `Override` +
   状态默认 `WriteDefaultValues = 1`，两层同时往**同一批属性**上写（各自还把自己的默认值写回去），
   谁赢取决于层的混合语义 —— 实测现象是 `mouthSmileLeft` 恒 0、`jawOpen` 也只有极小值，
   而且完全分不清是"参数没写上"还是"第二层没生效"。单层一条树就没有这个歧义：所有绑定在**同一个 motion** 里。
 * 为什么必须在 **2021.3.45f2** 那个编辑器里打：AssetBundle 与 Unity 版本绑定，而 **Warudo 本体就是 2021.3.45f2**
   （读自 `Warudo_Data/globalgamemanagers`）；mod 工程也正好是它（`ProjectSettings/ProjectVersion.txt`）✓。
-* 期望结果（粘进「HoFace控制求解」的 `控制器（可选，AssetBundle 路径）` 后看 `状态`）：
+* 期望结果（在「HoFace控制求解」的 `控制器` 下拉里选中它 → 按 `重读控制器` → 看 `状态`）：
   `已载入：hoface-controller-test.bundle（参数 2 个，形状 2 个，网格 1 个）`，
   `对上参数 2 个`，并多一行 **`写入 jawOpen 0.123 / mouthSmileLeft 0.946`**（← 这一行是"参数真的写进去了"的证据），
   然后 `BlendShapes` 里出现 `jawOpen` / `mouthSmileLeft`，值随输入变（Unity 权重 0..100 → 我们 /100）。
@@ -375,17 +419,19 @@
 
 两处"以为生效了、其实没有"，都用**时间戳**一眼可查：
 
-| 东西 | Warudo 实际读的 | 工作区刚生成的 | 症状 |
+| 东西 | Warudo 实际读的 | 当时工作区刚生成的 | 症状 |
 |---|---|---|---|
-| 控制器 bundle | `…\Plugins\Data\hollow.hofacetracking\hoface-controller-test.bundle` | `<工程根>\_hodebug\hoface-controller-test.bundle` | `state=<哈希>` **一直不变**，`clip` 条数/名字也不变 |
+| 控制器 bundle | `…\Plugins\Data\hollow.hofacetracking\hoface-controller-test.bundle` | `<工程根>\_hodebug\…bundle` | `state=<哈希>` **一直不变**，`clip` 条数/名字也不变 |
 | mod 代码 | `…\Warudo_Data\StreamingAssets\Plugins\HoFaceTracking.warudo` | `Mods-Ho/HoFaceTracking/*.cs` | 新加的日志行**一条都不出现** |
 
-* 菜单 `造调试用控制器 bundle` 只往 **`_hodebug`（工程根）** 写；那**不是** Warudo 读的沙箱目录。
-  打完必须**自己复制**到 `Warudo_Data\StreamingAssets\Plugins\Data\hollow.hofacetracking\`。
-  （沙箱路径就是「HoFace参数处理」`状态` 口里那个 `Root`。）
+* ✅ **bundle 那个坑已经堵上**（2026-09-25 当天）：菜单改成**直接打进沙箱**
+  （`HoDebugBundleBuilder.SandboxFolder`），节点改成**沙箱文件名 + 下拉列表**
+  （`HoFaceController.Prepare(files, name)` → `ReadFileBytes` → `LoadFromMemory`）。
+  现在按一次菜单就到位，**不用再手工复制**；装在别处（没有那个目录）时才退回 `_hodebug/` 并**在日志里警告**。
+  另见 §1.1.2 的路径口径。
 * `.warudo` 是**打包产物**：改了 `.cs` 不重新打包，Warudo 加载的还是旧 DLL。
   ⚠️ 判据：`HoFaceTracking.warudo` 的 mtime **必须晚于**你最后改的 `.cs`。
-* 还有一层：`HoFaceController.Prepare` 对**同一路径**直接返回，所以**换了 bundle 文件也必须按 `重读控制器`**。
+* 还有一层：`HoFaceController.Prepare` 对**同名**文件直接返回，所以**换了文件（哪怕同名）也必须按 `重读控制器`**。
 * 👉 **一眼确认清单**（顺序照做，每步都有可见判据）：
   1. `HoFaceTracking.warudo` mtime > 最后一次改 `.cs` 的时间；
   2. 沙箱里 bundle 的 mtime > 重打那次的时间；
@@ -416,6 +462,10 @@
 * **`有脸` 由上游算**（VTS 的判据依赖裸线名 `FaceFound` + 新鲜度，那是协议知识，求解看不到）；
   控制求解那个输入**默认 `true`**（不接线时按"一直有脸"处理）。
 * **控制求解保持零配置**（一旦塞进曲线/平滑，"跳过参数处理"就没意义了）。
+  ⚠️ 唯一那个"配置"是 **`控制器`**（必填的 bundle 选择）—— 它是**求值场所**，不是映射；
+  映射（改名/量纲/曲线/平滑）仍然全在参数处理那一层。
+* ⚠️ **求解器现在只管头/根位置**：形状与骨骼由控制器负责（§1.1.3）。所以"跳过参数处理直接喂控制求解"
+  这条路的**前提变成了"你得有一个能吃的控制器"** —— 位置那部分仍可以只靠保留名。
 * 老 `处理链` 的 `NodeType.Id` 已经给了**控制求解**，所以指官方三个节点的那 5 根线原样保住。
 
 ✅ **第三条来源（同一天落地）：接收器加了「VTS 服务端」模式，不新增节点。**
