@@ -4,7 +4,7 @@
 > `D:\Unity_Fork\HoUnityTools\.research\sync-modcore.ps1` 的 `$files`（第 22–31 行）——
 > **下面两张表必须跟它一致，改了脚本就改这里。**
 
-## 1. 搬来的 8 份（同步脚本的清单）
+## 1. 搬来的 10 份（同步脚本的清单）
 
 | 这里的文件 | 出处（HoUnityTools 包内） | 干什么的 |
 |---|---|---|
@@ -16,6 +16,15 @@
 | `HoFaceProfileJson.cs` | `Runtime/FaceTracking/HoFaceProfileJson.cs` | profile 的 JSON 读写（替代 `JsonUtility`） |
 | `HoFaceTrackingChannels.cs` | `Runtime/FaceTracking/HoFaceTrackingChannels.cs` | 52 个规范形态键名（外带区域/模式/平滑分组等枚举） |
 | `HoFaceNaming.cs` | `Runtime/FaceTracking/HoFaceNaming.cs` | 参数命名规则（`Ho/Drive/...`） |
+| `HoFaceSemanticAsset.cs` | `Runtime/FaceTracking/HoFaceSemanticAsset.cs` | **动态参数（语义）定义**：名字、中性值、范围；**顺序即下标** |
+| `HoFaceSemanticHub.cs` | `Runtime/FaceTracking/HoFaceSemanticHub.cs` | **动态参数运行期槽**：`float[]` + 取值/写值/按名解析 |
+
+**⚠️ 后两个（语义 Hub 这一对）为什么必须**在两边都存在**：它们挂在**角色 mod 的预制件**上
+（`Character/SemanticHub` 空物体），而同一份预制件在 Unity 侧调试、在 Warudo 里跑 —— 两边都要有这个类型。
+各写一份会漂，所以走同一个同步脚本。
+实测（2026-09-25）：`MonoBehaviour` 与 `ScriptableObject` 在 mod 程序集里**编译通过且 lint clean**；
+FastBuild 会把 mod 源码复制进包、由 UMod 编译（`Editor/FastBuildWarudoMod`，另有产物校验器专门查这件事）。
+⚠️ 这两个文件里**故意没有 `#if UNITY_EDITOR`** —— 同步脚本只加文件头、换命名空间，条件编译块会让两边不一致。
 
 **唯一被改的是命名空间**：`Hollow.HoUnityTools.FaceTracking` → `HoFaceTracking.Core`
 （脚本第 33–34 行定义、第 63 行做全文替换）。代码本身一个字节都没动。

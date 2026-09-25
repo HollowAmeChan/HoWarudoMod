@@ -15,7 +15,7 @@
 // 【为什么不用 JsonUtility（第三次了）】
 // 官方载荷里 `BlendShapes` 是 `List<VTSTrackingDataEntry>`（`{k, v}` 的列表）。
 // 用 `JsonUtility.FromJson` 解析的结果是：**12 个头眼分量全在、52 个形态键全丢** ——
-// 解析"成功"、字段名也对，但最要紧的东西没了（本机实测，`本帧键 15`）。
+// 解析"成功"、字段名也对，但最要紧的东西没了（本机实测，`本帧键数=15`）。
 // `JsonUtility` 在 Warudo 播放器里会静默丢掉 `List<嵌套类>` 字段，所以这里走
 // 我们自己的 `HoJsonReader`。详见 Runtime/FaceTracking/HoJson.cs 里记的三次事故。
 //
