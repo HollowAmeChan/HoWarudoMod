@@ -34,13 +34,12 @@ namespace HoFaceTracking.Core
     /// {
     ///   "format": "ho-face-middleware",
     ///   "version": 2,
-    ///   "displayName": "ho-2d-test1",
+    ///   "displayName": "my-face",
     ///   "inputs": [
-    ///     { "parameter": "jawOpen", "expression": "jawOpen * 0.01", "notes": "iFacialMocap" },
-    ///     { "parameter": "jawOpen", "expression": "JawOpen", "notes": "VTS 手机" }
+    ///     { "parameter": "jawOpen", "expression": "JawOpen", "notes": "VTS 手机：线名首字母大写" }
     ///   ],
     ///   "outputs": [
-    ///     { "parameter": "ARKit/jawOpen", "expression": "jawOpen",
+    ///     { "parameter": "JawOpen", "expression": "jawOpen",
     ///       "curve": { "keys": [ { "t": 0, "v": 0, "inT": 0, "outT": 0 },
     ///                            { "t": 1, "v": 1, "inT": 0, "outT": 0 } ] },
     ///       "modifiers": [ { "kind": "smooth", "seconds": 0.03 } ] }
@@ -48,6 +47,8 @@ namespace HoFaceTracking.Core
     /// }
     /// </code>
     /// 未知字段会被跳过（向前兼容）；`kind` 不认识时那一条修饰符被丢掉，并在面板上点名。
+    /// ⚠️ **没有"内置默认配置"这回事**：这个仓库里不存在任何一份默认表，
+    /// 也没人会在"没指定文件"时替作者编一张出来（统一口径：**空 = 空表**）。
     /// </summary>
     public static class HoFaceProfile
     {
@@ -68,12 +69,6 @@ namespace HoFaceTracking.Core
         public static string Write(HoFaceMiddleware middleware)
         {
             return HoFaceProfileJson.Write(middleware);
-        }
-
-        /// <summary>内置默认的配置文本（"新建配置文件"与包内那份默认配置都用它）。</summary>
-        public static string WriteDefaults()
-        {
-            return Write(HoFaceMiddlewareDefaults.Create());
         }
     }
 }

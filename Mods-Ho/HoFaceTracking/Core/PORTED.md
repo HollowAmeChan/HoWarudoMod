@@ -1,15 +1,16 @@
 # Core/ 里哪些文件是**搬来的**，哪些是这里写的
 
-> 2026-09-25 按源码与同步脚本核对。权威清单是脚本本身：
-> `D:\Unity_Fork\HoUnityTools\.research\sync-modcore.ps1` 的 `$files`（第 22–31 行）——
-> **下面两张表必须跟它一致，改了脚本就改这里。**
+> 2026-09-26 按源码与同步脚本核对。**权威清单是下面第 1 节那张表**（它在仓库里，能跟着代码走）。
+> 同步脚本 `D:\Unity_Fork\HoUnityTools\.research\sync-modcore.ps1` 的 `$files`（第 22–38 行）
+> 是**执行同一张表的工具**，它按 `.research/` 的惯例不入库 —— 所以别把它当唯一出处：
+> **改了清单要同时改脚本，改了两边都要能对上。**
 
-## 1. 搬来的 10 份（同步脚本的清单）
+## 1. 搬来的 10 份（**以本表为准**；同步脚本只是执行它的工具）
 
 | 这里的文件 | 出处（HoUnityTools 包内） | 干什么的 |
 |---|---|---|
 | `HoFaceExpression.cs` | `Runtime/FaceTracking/HoFaceExpression.cs` | 表达式求值器（解析一次、逐帧求值；求值**绝不抛异常**） |
-| `HoFaceMiddleware.cs` | `Runtime/FaceTracking/HoFaceMiddleware.cs` | 行对象、曲线端点夹取、修饰符种类、内置默认配置 |
+| `HoFaceMiddleware.cs` | `Runtime/FaceTracking/HoFaceMiddleware.cs` | 行对象、曲线端点夹取、修饰符种类（**没有"内置默认配置"了**：`HoFaceMiddlewareDefaults` 2026-09-26 删） |
 | `HoFaceProfile.cs` | `Runtime/FaceTracking/HoFaceProfile.cs` | `*.hoface.json` 的**格式名 + 入口**（真正的读写在 `HoFaceProfileJson.cs`） |
 | `HoJson.cs` | `Runtime/FaceTracking/HoJson.cs` | 极小的 JSON 读取器——我们**所有**数据路径共用的那一份 |
 | `HoVtsPacket.cs` | `Runtime/FaceTracking/HoVtsPacket.cs` | VTS 手机线格式：请求包构造 + 载荷解析（纯静态、不碰 socket，可离线测） |
@@ -19,9 +20,13 @@
 | `HoFaceSemanticAsset.cs` | `Runtime/FaceTracking/HoFaceSemanticAsset.cs` | **动态参数（语义）定义**：名字、中性值、范围；**顺序即下标** |
 | `HoFaceSemanticHub.cs` | `Runtime/FaceTracking/HoFaceSemanticHub.cs` | **动态参数运行期槽**：`float[]` + 取值/写值/按名解析 |
 
-**⚠️ 后两个（语义 Hub 这一对）为什么必须**在两边都存在**：它们挂在**角色 mod 的预制件**上
-（`Character/SemanticHub` 空物体），而同一份预制件在 Unity 侧调试、在 Warudo 里跑 —— 两边都要有这个类型。
-各写一份会漂，所以走同一个同步脚本。
+**⚠️ 在两边各写一份，是本项目的既定做法 —— 而且不止 Hub 这一处。**
+所以别为这一对单独找"少写一份"的路子：**不搞"只留包侧一份、让 build 填进来"，
+也不搞子 asmdef 那套绕法**。两份就是两份，靠 §1 那张清单 + 同步脚本保证不漂；
+清单之外的重复留给各自的机制（不是本文件管的范围）。
+（原因：两边是**两个 Unity 工程、两个程序集**，Unity 工程之间不能互相引用源码；
+而"Unity 面板里预览到什么，Warudo 里就输出什么"要求这份代码是同一份 —— 见 §3。）
+
 实测（2026-09-25）：`MonoBehaviour` 与 `ScriptableObject` 在 mod 程序集里**编译通过且 lint clean**；
 FastBuild 会把 mod 源码复制进包、由 UMod 编译（`Editor/FastBuildWarudoMod`，另有产物校验器专门查这件事）。
 ⚠️ 这两个文件里**故意没有 `#if UNITY_EDITOR`** —— 同步脚本只加文件头、换命名空间，条件编译块会让两边不一致。
@@ -32,9 +37,9 @@ FastBuild 会把 mod 源码复制进包、由 UMod 编译（`Editor/FastBuildWar
 每份文件顶上还加了 **6 行 ASCII 标记 + 一个空行**（脚本第 37–45 行），
 例：`Core/HoFaceMiddleware.cs:1-7`。看到这个头就知道"别在这儿改"。
 
-**2026-09-25 实测：这 8 份与"重跑一遍同步"的输出逐字节一致**
+**2026-09-26 实测：这 10 份与"重跑一遍同步"的输出逐字节一致**
 （用脚本的同一套规则——去 BOM、换命名空间、归一成 LF、拼上头——重算一遍再比字节；
-8 份全 identical，包侧主本也是无 BOM UTF-8）。所以现在两边没有分叉。
+10 份全 identical，包侧主本也是无 BOM UTF-8）。所以现在两边没有分叉。
 
 ## 2. 这里自己写的 8 份（**不在**同步清单里）
 
@@ -62,7 +67,7 @@ Unity 工程之间不能互相引用源码；junction 又不可靠（Unity 的�
 
 **主本在 HoUnityTools 包**（`Runtime/FaceTracking/`）。规则是：
 
-1. 改**包**里的那 8 份中的任何一份；
+1. 改**包**里的那 10 份中的任何一份；
 2. 跑脚本（它会覆盖 mod 侧副本）；
 3. 包侧与 mod 侧一起交给人提交 —— **本工作区的提交统一由人处理，不要在同步后自己 commit**。
 
@@ -70,7 +75,7 @@ Unity 工程之间不能互相引用源码；junction 又不可靠（Unity 的�
 & D:\Unity_Fork\HoUnityTools\.research\sync-modcore.ps1
 ```
 
-脚本会：重新拷贝这 8 份 → 换命名空间 → 加标记头 → 写成**不带 BOM 的 UTF-8 + LF**
+脚本会：重新拷贝这 10 份 → 换命名空间 → 加标记头 → 写成**不带 BOM 的 UTF-8 + LF**
 （Mod 的 `.cs` 不带 BOM；Unity 包的文档才带 BOM），最后再把整个 mod 工作区里**所有** `.cs`
 的行尾统一成 LF（脚本第 83–94 行）。脚本是幂等的。
 
@@ -108,7 +113,7 @@ Unity 工程之间不能互相引用源码；junction 又不可靠（Unity 的�
 编辑器版取变量是三层：**形态键通道**（带模式 / 输入曲线 / 断流回中性）→ 输入行 → 原始线名。
 Warudo 侧**没有通道**：那套是"这台设备、这张脸"的校准，属于 Unity 里的组件，不属于运行期。
 所以这里是两层：**输入行的结果（缺键保持上一帧）→ 原始线名**（`HoFaceChain.cs:16-22`）。
-求值、缺键语义、修饰符顺序、曲线端点夹取仍由上面那 8 份（与包同源）实现。
+求值、缺键语义、修饰符顺序、曲线端点夹取仍由上面那 10 份（与包同源）实现。
 
 ## 7. 数据路径的硬规则（跟"搬"这件事直接相关）
 

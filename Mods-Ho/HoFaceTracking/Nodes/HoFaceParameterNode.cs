@@ -54,9 +54,11 @@ namespace HoFaceTracking.Nodes
         public bool RawFresh;
 
         /// <summary>
-        /// 沙箱里的配置文件名（例如 <c>ho-2d-test1.hoface.json</c>，子目录写相对路径）——
+        /// 沙箱里的配置文件名（例如 <c>my-face.hoface.json</c>，子目录写相对路径）——
         /// **下拉列表里选**（`[AutoComplete]`，列出沙箱里的 `*.hoface.json`）。
         /// **留空 = 这一层不做事**（2026-09-25 起没有内置默认；见 `HoFaceProfileStore.Refresh` 的注释）。
+        /// ⚠️ **没有任何"默认配置"可以退回**（2026-09-26：连内置默认表那个类都删了）——
+        /// 空就是空表，节点不会替你编一张出来。
         /// </summary>
         [DataInput(30)]
         [Label("配置文件")]
