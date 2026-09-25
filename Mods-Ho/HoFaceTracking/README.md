@@ -28,7 +28,7 @@
 | NodeTypes | 6 个（见下表） |
 | 命名空间 | `HoFaceTracking.PluginMod`（**不要**叫 `...Plugin`：会遮蔽 `Plugin` 基类，CS0118，见 `HoFaceTrackingPlugin.cs:20-21`） |
 
-### 1.1 节点（6 个，一个 Mod 全包了）
+### 1.1 节点（7 个，一个 Mod 全包了）
 
 | 节点（代码） | 面板标题 | 状态 | 干什么 |
 |---|---|---|---|
@@ -37,6 +37,7 @@
 | `Nodes/HoFaceSolverNode.cs` | HoFace控制求解 | **正式** | **从参数反求动画输出**（零配置）：官方同形的 5 个口 + 一个 `状态`（**6 个输出口**；`动态参数` 那个口 2026-09-26 删了 —— 动态参数现在由中间层直接写角色 Hub） |
 | `Nodes/HoFaceHubWriteNode.cs` | HoFace写动态参数 | **正式** | 把**中间层那份参数**（参数处理的 `参数` / 「Ho合并字典」的 `字典`）写进**角色身上**的 `HoFaceSemanticHub`（**只有一个组件**：直接找它；名字按名字走，**没有表**）（2 个输出口：`写入数` / `状态`） |
 | `Nodes/HoDebugLogNode.cs` | Ho调试日志 | **正式（通用件，跟面捕无关）** | 一个入口 + 一块只读显示 + 一个「复制」按钮（`[Trigger]`，**没有任何输出口**） |
+| `Nodes/HoStringFloatNode.cs` | HoStringFloat | **正式（通用件，跟面捕无关）** | **面板手填若干 `(名字, 值)` → 输出一份字典**。图里没有"手填字典"这回事（`Dictionary<string,float>` 是 `Reference` 类口，官方从来不手填），所以"手填一张表"只能做成节点 —— 它就是这类表的**产出**端（2 个输出口：`字典` / `状态`） |
 | `Nodes/HoDictionaryMergeNode.cs` | Ho合并字典 | **正式（通用件，跟面捕无关）** | 两块「名字 → 浮点」表合并/覆盖 + **面板手填的覆盖行**（元组行）。官方没有"字典合并"节点（合并只给了骨骼旋转/权重两族），这个补空缺；典型用法是把控制器里恒 1 的门控 merge 成 0（2 个输出口：`字典` / `状态`） |
 
 **📖→✅ 2026-09-25 的拆分**：原来的 `Nodes/HoFaceMiddlewareNode.cs`（「Ho Face 处理链」= 中间层 + 控制器合一）
@@ -58,12 +59,39 @@
 **控制求解 `7c3a91d6-4f2b-48e7-9a15-63d8f0b2c47e`（沿用旧「处理链」那个）**、
 写动态参数 `c47b1e05-8a92-4f6d-b3c1-7e5a9d20f68b`、
 调试日志 `e2a47f83-5d19-4c6b-a07e-91b3c58d4f26`、
-**合并字典 `3f0c7d51-6a24-4f8b-9c02-8e1d5b7a64c3`**。
-分类：面捕那 5 个都是 `Ho Face Tracking`，**合并字典是 `Ho General`**（它跟面捕无关，只是暂时放在这个 mod 里）。
+**合并字典 `3f0c7d51-6a24-4f8b-9c02-8e1d5b7a64c3`**、
+**HoStringFloat `3e9abc40-8c60-4238-880a-c4a4febee63a`**。
+分类：面捕那 5 个都是 `Ho Face Tracking`，**合并字典与 HoStringFloat 是 `Ho General`**（两个通用件，跟面捕无关，只是暂时放在这个 mod 里）。
 
 ⚠️ **Id 的这段安排是有意的**：老「处理链」的 Id 给了**控制求解** —— 于是升级之后，
 指官方三个应用节点的那 **5 根线原样保住**；参数处理是新 Id，需要重接的只有接收器过来那几根
 （< 5 根）。另外：Id 或口名一变，老连线就是孤儿线（见 HoUnityTools `docs/pitfalls/WARUDO_INSPECTION.md` §7）。
+
+**HoStringFloat 节点端口**（`Nodes/HoStringFloatNode.cs`，2026-09-27 加）
+
+| 端口 | 说明 |
+|---|---|
+| `行`(10)（`HoStringFloatEntry[]`） | **面板上手填的 `(名字, 值)` 行**，加/删行、不用接线。空名字的行忽略；同名多行 ⇒ **后面的赢** |
+| `字典`(输出) | 手填出来的那份表（`Dictionary<string,float>`）。**内部复用同一个实例**（同官方 `OffsetBlendShapeNode.lastBlendShapes`） |
+| `状态`(输出) | 行 N · 有效 M · 结果 X 键 · 同名重复 / 空名字的行 |
+
+**为什么需要一个节点来"手填字典"**：`Dictionary<string,float>` 在 Warudo 里落在 **`Reference`** 那一类口上，
+官方那 41 个字典口**全是接过来的、一个都没手填过**（2026-09-26 取证：官方场景 json 的 `typeKind` 统计 +
+两套程序集全量反射，见 HoUnityTools `docs/FACE_TRACKING_WARUDO_ROUTE.md` §3.5）。
+官方能"手填一组一组东西"的只有 `ValueArray` 与 `StructuredData` 行 —— 所以"手填一张表"**只能做成节点**。
+
+典型接法：`HoStringFloat（手填 Ho/Drive/Gate/Lip = 0）→ 字典` ⇒ 喂「Ho合并字典」的 `覆盖字典`，
+或直接喂「HoFace控制求解」/「HoFace写动态参数」。
+
+⚠️ **为什么它输出字典、而不是什么"元组类型"**：图里唯一的字典类型就是 `Dictionary<string,float>`，
+合并字典/控制求解/写动态参数的口全是它 ⇒ **类型完全相同、直接能插**；而"别的类型不许接"由 Warudo
+在**接线那一刻**抛 `ArgumentException("… is not compatible with …")` 执行（比运行期自己判类型严格得多）。
+多态口（`object`）只有在"可接线的元组类型真的存在"时才有意义，而它并不存在（官方没有
+`Tuple`/`KeyValuePair` 端口类型；多态只有 `object` 与 **转换器**两条路，见路线图 §3.5 的接线规则）。
+
+⚠️ **跨仓验证项**：`行` 用的是 mod 自己定义的 `StructuredData<>` 行类型。类型注册是**懒加载**的
+（`StructuredDataTypeRegistry.GetTypeMeta` 首次查询时 `RegisterType`，不需要全程序集扫描），
+但"mod 节点面板能不能正常渲染 / 增删这种行"**只能在 Warudo 里验证**（Unity 侧测不到）。
 
 **合并/覆盖节点端口**（`Nodes/HoDictionaryMergeNode.cs`，2026-09-26 加）
 
