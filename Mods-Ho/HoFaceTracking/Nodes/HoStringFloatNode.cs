@@ -1,21 +1,24 @@
-// HoStringFloatNode.cs  --  「HoStringFloat」：**一个 `(名字, 值)`** —— 也就是"元组"在图里的形态
+// HoStringFloatNode.cs  --  「HoStringFloat」：**一个 `(名字, 值)`** —— 输出 `.NET` 的 `KeyValuePair<string,float>`
 //
-// 【为什么它长这样】（2026-09-27 定）
-// Warudo 的图里**没有元组端口类型**（全量 port 词汇表里没有 `Tuple`/`KeyValuePair`，
-// 唯一的容器就是 `Dictionary<string,float>`；自定义 struct 当端口属未验证区，而且会丢掉
-// "接线时就拦错"这条检查）。所以"一个元组"现实的表达就是**一份只含这一项的字典**：
-//   `名字` + `值` → 字典（1 项）
-// 它跟官方 `Empty BlendShape List` / `Literal Float` 那一类"常量节点"是一路的，只是内容是 `(名字, 值)`。
+// 【形状】`名字`(string) + `值`(float) → `元组`(`KeyValuePair<string,float>`)
+// 这就是"把值拼成一个元组"那一步：布尔先用 `HoBool2Float` 换成 1/0，再由这里配上名字。
 //
-// 【家族】（面板里前缀一致，排在一起）
-//   `HoStringFloat`        —— 一个 `(名字, 值)` → 1 项字典（**本文件**）
-//   `HoStringFloatAppend`  —— 表 + 名字 + 值 → 追加后的表（一条一条拼）
+// 【✅ 2026-09-27 实测：`KeyValuePair<string,float>` **能当 Warudo 的图端口**】
+// 之前我按"官方 port 词汇表里没有 `Tuple`/`KeyValuePair`"推断"不能当端口"，于是绕成 `名字`+`值` 两个口 ——
+// 那是**推断，不是实测**（用户指出："为什么你就是不能写 `<string,float>` 类型呢"）。
+// 拿探针节点（`HoStringFloatProbe`）在 Warudo 里一跑就清楚了：
+//   · 节点**注册通过、出现在面板里**（注册期要把字段默认值序列化成字符串，这一关过了）；
+//   · `KeyValuePair<string,float>` 的端口**画得出来**，悬停提示直接写 `KeyValuePair<String, Float>`。
+// ⇒ 所以家族改成**真元组口**：本节点吐元组、`HoStringFloatAppend` 收元组。
+//
+// 【家族】
+//   `HoStringFloat`        —— 名字 + 值 → **元组**（本文件）
+//   `HoStringFloatAppend`  —— 表 + 元组 → 追加后的表（**"再转字典"就是它**）
 //   `HoStringFloatMerge`   —— 两张表 → 一张（下面的盖上面的）
 //   `HoStringFloatDict`    —— 面板手填多行 → 直接创建一张表
-//   `HoBool2Float`         —— bool → float（官方缺这一个转换，见下）
+//   `HoBool2Float`         —— bool → 1/0（官方没有这个转换，而面捕里布尔值很多）
 //
-// ⚠️ **坑**：名字留空 ⇒ 出来的是**空表**（不是"名字为空的那一项"）—— 字典的键不能是空串，
-//   `状态` 里会明说。要拼表就用 `HoStringFloatAppend`，别把空名字接进来。
+// ⚠️ 名字留空时 `Key` 是空串：下游 `HoStringFloatAppend` 会把它当"没有这一项"（`状态` 里会说明）。
 //
 // 【端口规则】[DataInput] = public 字段；[DataOutput] = public 方法；
 // ⚠️ 字段名别叫 Name（撞 Node 基类）；`Plugin` 也别用（撞 Node.Plugin 属性）。
@@ -34,7 +37,7 @@ namespace HoFaceTracking.Nodes
     {
         // ── 输入 ────────────────────────────────────────────────────────────────
 
-        /// <summary>这一项的名字（= 目标字典的键）。**留空就是空表**。</summary>
+        /// <summary>这一项的名字。**留空 = 这个元组没有名字**（下游会跳过它）。</summary>
         [DataInput(10)]
         [Label("名字")]
         public string Key;
@@ -44,33 +47,26 @@ namespace HoFaceTracking.Nodes
         [Label("值")]
         public float Value;
 
-        // ── 状态 ────────────────────────────────────────────────────────────────
-
-        private readonly Dictionary<string, float> table = new Dictionary<string, float>();
-
         // ── 输出 ────────────────────────────────────────────────────────────────
 
         /// <summary>
-        /// 只含这一项的字典（名字为空时是**空表**）。
-        /// ⚠️ **返回的是内部复用的同一个实例**（官方 `OffsetBlendShapeNode.lastBlendShapes` 也是这个做法）：
-        /// 别把它存下来跨帧看，要留一份就自己拷。
+        /// 拼出来的 `(名字, 值)`。`KeyValuePair` 是**值类型**，所以这里没有"复用实例"那类坑
+        /// （对比几个字典口：它们复用的是内部 `Dictionary`）。
         /// </summary>
         [DataOutput]
-        [Label("字典")]
-        public Dictionary<string, float> Table()
+        [Label("元组")]
+        public KeyValuePair<string, float> Tuple()
         {
-            table.Clear();
-            if (!string.IsNullOrEmpty(Key)) table[Key] = Value;
-            return table;
+            return new KeyValuePair<string, float>(Key, Value);
         }
 
-        /// <summary>状态：这一项是什么（或"名字为空 ⇒ 空表"）。</summary>
+        /// <summary>状态：这个元组是什么（或"名字为空"）。</summary>
         [DataOutput]
         [Label("状态")]
         public string Status()
         {
             return string.IsNullOrEmpty(Key)
-                ? "⚠ 名字为空 ⇒ 输出的是空表（字典的键不能是空串）"
+                ? "⚠ 名字为空 ⇒ 这个元组没有名字（下游 `HoStringFloatAppend` 会跳过它）"
                 : Key + " = " + Value.ToString("0.###");
         }
     }
