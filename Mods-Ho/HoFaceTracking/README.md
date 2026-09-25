@@ -363,34 +363,35 @@
 * 用法：在「HoFace参数处理」的 `配置文件` 里填 `ho-debug-android.hoface.json`（沙箱里那份；沙箱路径见 `状态` 口）。
   **改这个文件不用重启**：配置按文件时间戳失效重读（`HoFaceProfileStore`），存盘后一秒内自动生效。
 
-**② 一个调试用的控制器**：**工具已经不在这个工作区里了**（2026-09-25 搬走，用户指出
-"HoWarudoModTests 怎么没砍"）。现在两步都在 **HoUnityTools 包**里：
+**② 控制器怎么来**：**没有"造一个调试控制器"这个功能了**（2026-09-25 删，用户定：
+"整个调试功能都不需要了，现在已经有通用生产面板了"）。以前那个夹具会在工程里生成一个三角形 rig +
+两个 blend shape 的假控制器，只为了把链路跑通；现在有**通用生产面板**，`控制器` 那条路走**你的真控制器**：
 
-1. **造资产**：菜单 **`HoUnityTools/面捕/造调试控制器（资产）`**
-   （`Editor/FaceTracking/HoFaceDebugControllerBuilder.cs`）—— 造出一个三角形网格 + 两个 blend shape
-   （名字故意 = 规范参数名 `jawOpen` / `mouthSmileLeft`）、一个 rig 预制体、一个**单层控制器**，
-   落在**工程内** `Assets/HoFaceDebugController/`（可以在编辑器里直接看）。
-2. **打包**：**`HoUnityTools / FastBuildWarudoMod` 的 `HoFT` 页** ——
-   控制器 = 刚造的那份；**绑定预制体** = `HoDebugRig`；输出目录 = Warudo 的插件沙箱 → 打包。
+1. **装配控制器**：`HoUnityTools/面捕/控制器编辑` —— 按槽位名把动画填进树与状态、
+   把形态键曲线重绑到你的调试对象（就地改你那一份，不新建资产）。
+2. **打成 bundle**：**`HoUnityTools / FastBuildWarudoMod` 的 `HoFT` 页** ——
+   控制器 = 你装配好的那份；**绑定预制体** = 它驱动的那个预制体；输出目录 = Warudo 的插件沙箱 → 打包。
    打成 `*.bundle`（**ChunkBasedCompression**，别用默认 LZMA —— 我们走 `LoadFromMemory`，
    那份要整段解压，内存路线更容易炸）。打包那一页会顺手校验"每条绑定路径在这份预制体里解析得到吗"。
    ⚠️ 输出目录**由你选**，所以**打完要自己确认落在沙箱里**（HoFT 页不会替你决定）。
 
-* ⚠️ **第一版控制器是"两层、每层一条 1D 树"（一层一个参数），它是个坑，别改回去**：两层都是 `Override` +
+下面这些**仍然是真结论**，只是当年的证据来自那个已经删掉的调试控制器（`jawOpen` / `mouthSmileLeft` 两个形状）：
+
+* ⚠️ **别把控制器做成"两层、每层一条 1D 树"（一层一个参数）**：两层都是 `Override` +
   状态默认 `WriteDefaultValues = 1`，两层同时往**同一批属性**上写（各自还把自己的默认值写回去），
   谁赢取决于层的混合语义 —— 实测现象是 `mouthSmileLeft` 恒 0、`jawOpen` 也只有极小值，
-  而且完全分不清是"参数没写上"还是"第二层没生效"。单层一条树就没有这个歧义：所有绑定在**同一个 motion** 里。
+  而且完全分不清是"参数没写上"还是"第二层没生效"。**一条树 + 一个状态**就没有这个歧义：
+  所有绑定在**同一个 motion** 里。这条与"参数怎么喂"无关，做真控制器时照样适用。
 * 为什么必须在 **2021.3.45f2** 那个编辑器里打：AssetBundle 与 Unity 版本绑定，而 **Warudo 本体就是 2021.3.45f2**
   （读自 `Warudo_Data/globalgamemanagers`）；mod 工程也正好是它（`ProjectSettings/ProjectVersion.txt`）✓。
 * 期望结果（在「HoFace控制求解」的 `控制器` 下拉里选中它 → 按 `重读控制器` → 看 `状态`）：
-  `已载入：hoface-controller-test.bundle（参数 2 个，形状 2 个，网格 1 个）`，
-  `对上参数 2 个`，并多一行 **`写入 jawOpen 0.123 / mouthSmileLeft 0.946`**（← 这一行是"参数真的写进去了"的证据），
-  然后 `BlendShapes` 里出现 `jawOpen` / `mouthSmileLeft`，值随输入变（Unity 权重 0..100 → 我们 /100）。
+  `已载入：…（参数 N 个，形状 M 个，网格 K 个）`、`对上参数 N 个`，
+  并多一行 **`写入 <参数名> <值>`**（← 这一行是"参数真的写进去了"的证据），
+  然后 `BlendShapes` 里出现代理网格上的形状名，值随输入变（Unity 权重 0..100 → 我们 /100）。
 * ⚠️ `写入` 那行报的是**我们写给 Animator 的数**，它到位 ≠ 形状到位：形状那一侧只看 `BlendShapes`。
   两行并排就能定性 —— 见 §1.6。
-
-* ⚠️ 它验不到**骨骼**那条路：`Animator.GetBoneTransform` 要 **Humanoid Avatar**，这个最小 rig 没有，
-  所以 `Bone Rotations` 会全是 identity（我们代码里 null → identity）—— 要验骨骼得塞一个带 Avatar 的人形模型。
+* ⚠️ **骨骼那条路要 Humanoid Avatar**：最小 rig 上没有，所以 `Bone Rotations` 会全是 identity
+  （我们代码里 null → identity）—— 用真角色的控制器才有骨骼输出。
 
 ### 1.6 现场：控制器里 `mouthSmileLeft = 0.000` 而参数层是 0.946（2026-09-25）
 
@@ -406,8 +407,8 @@
   ⇒ 现在 `状态` 多一行 `写入 jawOpen 0.123 / mouthSmileLeft 0.946`（`HoFaceController.MatchedText`）：
   只要这行里 `mouthSmileLeft` 不是 0，就说明**输入到位了**，问题 100% 在控制器那一侧。
 * 控制器那一侧的嫌疑已经定位到**第一版 bundle 的两层结构**（`Override` + `WriteDefaultValues = 1` 互写），
-  调试控制器已改成**单层一条 2D 混合树**（现在是包里的 `HoFaceDebugControllerBuilder`，见 §1.5 ②）。
-  ⚠️ **旧的 `hoface-controller-test.bundle` 不会自己变**：必须重新造控制器 + 用 HoFT 页重打，
+  那条结论**与控制器是谁做的无关**：别把控制器做成"一层一个参数"（见 §1.5 ② 那条 ⚠️）。
+  ⚠️ **旧的 `hoface-controller-test.bundle` 不会自己变**：必须重新打包，
   再在节点上按 `重读控制器`（`HoFaceController.Prepare` 对同一路径是直接返回的，认不出文件被换过）。
 * 2026-09-25 第二轮现场（用户重打后仍然 0）：`状态`/日志给出
   `写入 jawOpen 0.118 / mouthSmileLeft 0.423`（**参数确实写进 Animator 了**）、
@@ -437,9 +438,8 @@
 
 * ✅ **bundle 那个坑已经堵上**（2026-09-25 当天）：节点改成**沙箱文件名 + 下拉列表**
   （`HoFaceController.Prepare(files, name)` → `ReadFileBytes` → `LoadFromMemory`）。
-  ⚠️ **工具搬家之后，落点改由你负责**：造资产在包的 `HoUnityTools/面捕/造调试控制器`，
-  打包在包 FastBuild 的 `HoFT` 页，**输出目录由你选**（选沙箱）。
-  也就是说"打进沙箱"不再是自动的 —— 打完照下面第 2 条确认一次。
+  ⚠️ **落点由你负责**：装配在包的 `HoUnityTools/面捕/控制器编辑`，打包在包 FastBuild 的 `HoFT` 页，
+  **输出目录由你选**（选沙箱）。也就是说"打进沙箱"不是自动的 —— 打完照下面第 2 条确认一次。
   另见 §1.1.2 的路径口径。
 * `.warudo` 是**打包产物**：改了 `.cs` 不重新打包，Warudo 加载的还是旧 DLL。
   ⚠️ 判据：`HoFaceTracking.warudo` 的 mtime **必须晚于**你最后改的 `.cs`。
