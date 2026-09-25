@@ -58,7 +58,10 @@ namespace HoFaceTracking.PluginMod
             typeof(HoStringFloatAppendNode),
             typeof(HoStringFloatMergeNode),
             typeof(HoStringFloatDictNode),
-            typeof(HoBool2FloatNode)
+            typeof(HoBool2FloatNode),
+            // ⚠️ **探针**（2026-09-27）：只为在 Warudo 里实测"`KeyValuePair<string,float>` 能不能当端口类型"。
+            // 结论出来之后要么删掉、要么把家族改成真元组口 —— 别在正式蓝图里依赖它。
+            typeof(HoStringFloatProbeNode)
         })]
     public class HoFaceTrackingPlugin : Plugin
     {
