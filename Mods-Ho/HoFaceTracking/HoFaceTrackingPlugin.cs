@@ -47,13 +47,18 @@ namespace HoFaceTracking.PluginMod
             typeof(HoFaceSolverNode),
             typeof(HoFaceHubWriteNode),
             typeof(HoDebugLogNode),
-            // 通用节点（不是面捕专用，只是暂时放在这个 mod 里）：
-            //   · HoStringFloat  —— 面板手填若干 `(名字, 值)`，出来一份字典（图里没有"手填字典"这回事，
-            //     所以只能做成节点；它是这类表的**产出**端）。
-            //   · HoDictionaryMergeNode —— 两块"名字 → 浮点"的表合并/覆盖（把控制器里恒 1 的门控
-            //     用覆盖的方式关掉：覆盖发生在参数输出之后、写进控制器之前）。
+            // 通用节点（不是面捕专用，只是暂时放在这个 mod 里）—— 一组"名字 → 浮点"的表工具，
+            // 前缀一致、面板里排在一起（家族说明见 Nodes/HoStringFloatNode.cs 的文件头）：
+            //   HoStringFloat       一个 (名字, 值) → 1 项字典（"元组"在图里的形态）
+            //   HoStringFloatAppend 表 + 名字 + 值 → 追加后的表
+            //   HoStringFloatMerge  两张表 → 一张（下面的盖上面的；把控制器里恒 1 的门控覆盖成 0 就靠它）
+            //   HoStringFloatDict   面板手填多行 → 直接创建一张表
+            //   HoBool2Float        bool → float（官方没有这个转换，面捕里布尔值很多）
             typeof(HoStringFloatNode),
-            typeof(HoDictionaryMergeNode)
+            typeof(HoStringFloatAppendNode),
+            typeof(HoStringFloatMergeNode),
+            typeof(HoStringFloatDictNode),
+            typeof(HoBool2FloatNode)
         })]
     public class HoFaceTrackingPlugin : Plugin
     {

@@ -1,4 +1,4 @@
-// HoDictionaryMergeNode.cs  --  「Ho合并字典」：两块"名字 → 浮点"的表，**下面的盖上面的**
+// HoStringFloatMergeNode.cs  --  「HoStringFloatMerge」：两块"名字 → 浮点"的表，**下面的盖上面的**
 //
 // 【形状】（2026-09-27 用户定：就两个输入口，别做复杂）
 //   `基础`(10)  ← 底表（典型接法：「HoFace参数处理」的 `参数`）
@@ -48,9 +48,9 @@ namespace HoFaceTracking.Nodes
 {
     [NodeType(
         Id = "3f0c7d51-6a24-4f8b-9c02-8e1d5b7a64c3",
-        Title = "Ho合并字典",
+        Title = "HoStringFloatMerge",
         Category = "Ho Face Tracking")]
-    public class HoDictionaryMergeNode : Node
+    public class HoStringFloatMergeNode : Node
     {
         // ── 输入 ────────────────────────────────────────────────────────────────
 
@@ -132,7 +132,7 @@ namespace HoFaceTracking.Nodes
                 + "/" + merged.Count + "/" + addedLast + "/" + overwrittenLast + "/" + badKeysLast;
             if (state == loggedState) return;
             loggedState = state;
-            Debug.Log("[Ho 合并字典] 基础 " + (Base != null ? Base.Count : 0)
+            Debug.Log("[Ho StringFloatMerge] 基础 " + (Base != null ? Base.Count : 0)
                 + " · 覆盖 " + (Overlay != null ? Overlay.Count : 0)
                 + " · 结果 " + merged.Count
                 + "（新增 " + addedLast + " / 覆盖 " + overwrittenLast + "）");
