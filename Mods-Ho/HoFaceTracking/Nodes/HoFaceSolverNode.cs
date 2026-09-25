@@ -257,30 +257,6 @@ namespace HoFaceTracking.Nodes
         }
 
         /// <summary>
-        /// **语义槽（动态参数）**：控制器写进影子 Hub 的那些值。
-        ///
-        /// 这就是"控制器 → 动态参数 Hub"这条件链的**出口**：
-        /// 控制器在 bundle 里跑，它的曲线把值写进影子上的 `HoFaceSemanticHub`，我们按**下标**采出来，
-        /// 交到下游的「写动态参数」节点写进**角色身上**的 Hub。
-        ///
-        /// ⚠️ 键是什么取决于**影子上的 Hub 填没填资产**：填了就是语义名（`MouthX`），
-        /// 没填就是下标字符串（`#0` / `#1`）—— 影子上的那份通常没资产（它只是代理）。
-        /// 所以下游那个写节点**也接受 `#<下标>`**，两边对齐用下标，不靠名字。
-        /// </summary>
-        [DataOutput]
-        [Label("动态参数")]
-        public Dictionary<string, float> HubValues()
-        {
-            Ensure();
-            var copy = new Dictionary<string, float>();
-            if (!controllerActive) return copy;
-            foreach (var pair in controller.HubValues) copy[pair.Key] = pair.Value;
-            return copy;
-        }
-
-        // ── 输出：诊断（就这一条）────────────────────────────────────────────────
-
-        /// <summary>
         /// 多行状态：收到几个参数、吐了几个形状、有脸没有、控制器怎么样。
         /// **控制器没就绪时这一段就是"为什么不吐"的说明书**（它同时也是唯一的报错出口 ——
         /// 这个节点没有 flow 口，没法"抛异常"，所以错误一律走这儿 + `Player.log`）。
@@ -294,7 +270,6 @@ namespace HoFaceTracking.Nodes
 
             string text = "参数 " + (Parameters != null ? Parameters.Count : 0) + " 个键"
                 + "  ·  形状 " + ShapeCount() + " 个"
-                + "  ·  动态参数 " + (controllerActive ? controller.HubValues.Count : 0) + " 个"
                 + "  ·  有脸=" + (Tracked ? "是" : "否")
                 + "  ·  头姿 " + EulerText();
 
@@ -303,15 +278,8 @@ namespace HoFaceTracking.Nodes
 
             // 没就绪时把"这一帧什么都没吐"说清楚（下游看到的是全中性）
             if (!controllerActive)
-                text += "\n⚠ 没有可用的控制器 —— 这一帧所有输出口全是中性（BlendShapes 空 / 位置零 / 骨骼 identity / "
-                    + "动态参数空），更下游不会被应用。修好上面那句再按「重读控制器」。";
-
-            // ⚠️ 动态参数是**独立的一条链**，它有没有通跟形状/骨骼无关：
-            // 影子上的 Hub 是 bundle 里那份 rig 带的，跟控制器的曲线写没写它是两件事。
-            if (controllerActive)
-                text += "\n动态参数：" + (controller.HubSlotCount > 0
-                    ? "影子 Hub " + controller.HubSlotCount + " 个槽 → 出口 " + controller.HubValues.Count + " 个键"
-                    : "⚠ 影子 rig 上没有 HoFaceSemanticHub —— 这份 bundle 没带它，控制器写不进动态参数");
+                text += "\n⚠ 没有可用的控制器 —— 这一帧所有输出口全是中性（BlendShapes 空 / 位置零 / 骨骼 identity），"
+                    + "更下游不会被应用。修好上面那句再按「重读控制器」。";
 
             // 写进去的参数名 → 值。**这是"输入到位没有"的唯一证据**：
             // 形状恒 0 时靠它把"参数没写上（名字对不上）"与"控制器没把那格推到网格上"分开。

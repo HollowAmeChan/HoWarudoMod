@@ -1,11 +1,11 @@
 # Core/ 里哪些文件是**搬来的**，哪些是这里写的
 
 > 2026-09-26 按源码与同步脚本核对。**权威清单是下面第 1 节那张表**（它在仓库里，能跟着代码走）。
-> 同步脚本 `D:\Unity_Fork\HoUnityTools\.research\sync-modcore.ps1` 的 `$files`（第 22–44 行）
+> 同步脚本 `D:\Unity_Fork\HoUnityTools\.research\sync-modcore.ps1` 的 `$files`（第 22–42 行）
 > 是**执行同一张表的工具**，它按 `.research/` 的惯例不入库 —— 所以别把它当唯一出处：
 > **改了清单要同时改脚本，改了两边都要能对上。**
 
-## 1. 搬来的 11 份（**以本表为准**；同步脚本只是执行它的工具）
+## 1. 搬来的 10 份（**以本表为准**；同步脚本只是执行它的工具）
 
 | 这里的文件 | 出处（HoUnityTools 包内） | 干什么的 |
 |---|---|---|
@@ -18,8 +18,13 @@
 | `HoFaceTrackingChannels.cs` | `Runtime/FaceTracking/HoFaceTrackingChannels.cs` | 52 个规范形态键名（外带区域/模式/平滑分组等枚举） |
 | `HoFaceNaming.cs` | `Runtime/FaceTracking/HoFaceNaming.cs` | 参数命名规则（`Ho/Drive/...`） |
 | `HoFaceSemanticConnector.cs` | `Runtime/FaceTracking/HoFaceSemanticConnector.cs` | **把动态参数挂出去的那个把手**：直接引用 Hub + 按名字读/写（**没有表、没有配置**）。2026-09-26 替掉 `HoFaceSemanticAsset`（ScriptableObject 资产），当天又把中间那一版放在它上面的"槽表"也删了 |
-| `HoFaceSemanticHub.cs` | `Runtime/FaceTracking/HoFaceSemanticHub.cs` | **语义运行期槽**：`float[] values` + `string[] names`，取值/写值/**按名字开槽**（`ClaimSlot`）。没有长度政策、不认识表 |
-| `HoFaceSemanticWriterBehaviour.cs` | `Runtime/FaceTracking/HoFaceSemanticWriterBehaviour.cs` | **语义写手**（`StateMachineBehaviour`，挂在控制器的状态上）：按表达式从 Animator 参数算值、按**名字**写进 Hub。2026-09-26 替掉"用动画曲线写 `values.<i>`"（那条要求作者预先知道下标） |
+| `HoFaceSemanticHub.cs` | `Runtime/FaceTracking/HoFaceSemanticHub.cs` | **动态参数运行期槽**：`float[] values` + `string[] names`，取值/写值/**按名字开槽**（`ClaimSlot`）。没有长度政策、不认识表；**写的人是中间层**（Unity 侧会话 / Warudo 侧「HoFace写动态参数」节点） |
+
+**⚠️ 曾经有第 11 份 `HoFaceSemanticWriterBehaviour.cs`（「语义写手」，`StateMachineBehaviour`，挂在控制器的状态上）。**
+2026-09-26 连同它那套"影子 Hub → 中继 / 求解节点的 `动态参数` 出口"一起**删除**：动态参数由**中间层**
+算完直接写角色 Hub（Unity 侧 `HoFaceAnimationSession.PublishSemantics`，Warudo 侧「HoFace写动态参数」节点）。
+删它的理由：那些值中间层本来就算得出来（它就是写参数的那个人），让控制器再算一遍 = 两份真相 +
+一个只在 bundle 里跑、编辑器里看不见的写者。
 
 **⚠️ 在两边各写一份，是本项目的既定做法 —— 而且不止 Hub 这一处。**
 所以别为这一对单独找"少写一份"的路子：**不搞"只留包侧一份、让 build 填进来"，
@@ -29,11 +34,11 @@
 而"Unity 面板里预览到什么，Warudo 里就输出什么"要求这份代码是同一份 —— 见 §3。）
 
 实测（2026-09-25）：`MonoBehaviour` 与 `ScriptableObject` 在 mod 程序集里**编译通过且 lint clean**
-（2026-09-26 起这 11 份里**已经没有 `ScriptableObject` 了** —— 语义词表从资产改成了 `HoFaceSemanticConnector` 组件；
-另外多了个 `StateMachineBehaviour`：`HoFaceSemanticWriterBehaviour`。两类基类都在 UnityEngine 里，mod 侧编译已验）；
+（2026-09-26 起这 10 份里**已经没有 `ScriptableObject` 了** —— 语义词表从资产改成了 `HoFaceSemanticConnector`
+组件；那第 11 份 `StateMachineBehaviour`（语义写手）当天加、当天删，见上）；
 FastBuild 会把 mod 源码复制进包、由 UMod 编译（`Editor/FastBuildWarudoMod`，另有产物校验器专门查这件事）。
-⚠️ 这三个文件里**故意没有 `#if UNITY_EDITOR`** —— 同步脚本只加文件头、换命名空间，条件编译块会让两边不一致。
-⚠️ 这三个文件里的组件是**要在预制件 / 控制器资产上序列化的**，所以字段一律 **public**、
+⚠️ 这两个文件里**故意没有 `#if UNITY_EDITOR`** —— 同步脚本只加文件头、换命名空间，条件编译块会让两边不一致。
+⚠️ 这两个文件里的组件是**要在预制件上序列化的**，所以字段一律 **public**、
 不用"私有字段 + `[SerializeField]`"（能不能在 mod 程序集里序列化没实测过）。
 
 **唯一被改的是命名空间**：`Hollow.HoUnityTools.FaceTracking` → `HoFaceTracking.Core`
@@ -42,9 +47,9 @@ FastBuild 会把 mod 源码复制进包、由 UMod 编译（`Editor/FastBuildWar
 每份文件顶上还加了 **6 行 ASCII 标记 + 一个空行**（脚本第 37–45 行），
 例：`Core/HoFaceMiddleware.cs:1-7`。看到这个头就知道"别在这儿改"。
 
-**2026-09-26 实测：这 11 份与"重跑一遍同步"的输出逐字节一致**
+**2026-09-26 实测：这 10 份与"重跑一遍同步"的输出逐字节一致**
 （用脚本的同一套规则——去 BOM、换命名空间、归一成 LF、拼上头——重算一遍再比字节；
-11 份全 identical，包侧主本也是无 BOM UTF-8）。所以现在两边没有分叉。
+10 份全 identical，包侧主本也是无 BOM UTF-8）。所以现在两边没有分叉。
 
 ## 2. 这里自己写的 8 份（**不在**同步清单里）
 
@@ -72,7 +77,7 @@ Unity 工程之间不能互相引用源码；junction 又不可靠（Unity 的�
 
 **主本在 HoUnityTools 包**（`Runtime/FaceTracking/`）。规则是：
 
-1. 改**包**里的那 11 份中的任何一份；
+1. 改**包**里的那 10 份中的任何一份；
 2. 跑脚本（它会覆盖 mod 侧副本）；
 3. 包侧与 mod 侧一起交给人提交 —— **本工作区的提交统一由人处理，不要在同步后自己 commit**。
 
@@ -80,7 +85,7 @@ Unity 工程之间不能互相引用源码；junction 又不可靠（Unity 的�
 & D:\Unity_Fork\HoUnityTools\.research\sync-modcore.ps1
 ```
 
-脚本会：重新拷贝这 11 份 → 换命名空间 → 加标记头 → 写成**不带 BOM 的 UTF-8 + LF**
+脚本会：重新拷贝这 10 份 → 换命名空间 → 加标记头 → 写成**不带 BOM 的 UTF-8 + LF**
 （Mod 的 `.cs` 不带 BOM；Unity 包的文档才带 BOM），最后再把整个 mod 工作区里**所有** `.cs`
 的行尾统一成 LF（脚本第 83–94 行）。脚本是幂等的。
 
@@ -118,7 +123,7 @@ Unity 工程之间不能互相引用源码；junction 又不可靠（Unity 的�
 编辑器版取变量是三层：**形态键通道**（带模式 / 输入曲线 / 断流回中性）→ 输入行 → 原始线名。
 Warudo 侧**没有通道**：那套是"这台设备、这张脸"的校准，属于 Unity 里的组件，不属于运行期。
 所以这里是两层：**输入行的结果（缺键保持上一帧）→ 原始线名**（`HoFaceChain.cs:16-22`）。
-求值、缺键语义、修饰符顺序、曲线端点夹取仍由上面那 11 份（与包同源）实现。
+求值、缺键语义、修饰符顺序、曲线端点夹取仍由上面那 10 份（与包同源）实现。
 
 ## 7. 数据路径的硬规则（跟"搬"这件事直接相关）
 

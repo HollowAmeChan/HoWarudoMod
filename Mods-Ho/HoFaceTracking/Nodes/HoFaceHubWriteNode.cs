@@ -1,21 +1,25 @@
-// HoFaceHubWriteNode.cs  --  「写动态参数」：把控制器算出来的语义槽写进**角色身上**的 Hub
+// HoFaceHubWriteNode.cs  --  「写动态参数」：把**中间层算出来的参数**写进**角色身上**的 Hub
 //
 // 【这条链的两端各在哪】
-//   控制器（bundle 里跑）→ 里面的「语义写手」（`HoFaceSemanticWriterBehaviour`，状态机行为）
-//     按**名字**在**影子 Hub** 上开槽写值
-//   → 「HoFace控制求解」的 `动态参数` 出口（我们按名字采出来）
-//   → **本节点** → 写进**角色身上**那份 Hub（`Character/…/SemanticHub`）
-// 影子那份是**代理**（只有值与写手当场声明的名字）；角色那份旁边挂着 `HoFaceSemanticConnector`（接口）。
+//   「HoFace参数处理」的 `参数` 出口（或先过一遍「Ho合并字典」做覆盖）
+//   → **本节点** → 写进**角色身上**那份 Hub（`Character/…/SemanticHub`，旁边挂着 `HoFaceSemanticConnector`）。
+// 也就是说：**写的人就是中间层**（Unity 侧是调试会话写同一份东西：`HoFaceAnimationSession.PublishSemantics`），
+// 控制器只负责"参数 → 形状 / 骨骼"，它不认识、也不再产出任何动态参数。
+//
+// ⚠️ **以前不是这样**（2026-09-26 清理）：那时候这条链是
+//   控制器里的「语义写手」（状态机行为）→ 影子 rig 上的 Hub → 「HoFace控制求解」的 `动态参数` 口 → 本节点。
+//   （那个"语义写手"是 2026-09-26 加的，当天就删了 —— 见下一条。）
+//   删掉的理由：那些值**中间层本来就算得出来**（它就是写参数的那个人），让控制器再算一遍 = 两份真相 +
+//   一个只在 bundle 里跑、编辑器里看不见的写者。于是求解节点那个 `动态参数` 出口也一起删了。
 //
 // 【为什么要有这个节点，而不是让求解节点直接写角色】
 //   求解节点是纯函数式的"从参数反求输出"，它不认识角色（角色在官方那三个 apply 节点上选）。
 //   写角色是**副作用**，必须由一个明确的节点承担 —— 这也符合"谁写、什么时候写"要看得见那条规矩。
 //
-// 【键怎么对上下标 —— **没有表**】
-//   名字**由写的人在运行期声明**（写手 `ClaimSlot`），所以本节点也照这条走：
-//     · 名字（`MouthX`）⇒ 角色 Hub 上**已有就复用、没有就当场开一格**；
-//     · `#<下标>`（硬约定）⇒ 直接把角色 Hub 开到那个长度再写（老式纯位置写法的兼容口）。
-//   ⇒ **没有"名字对不上"的校验点了**（表 2026-09-26 删掉）：写手把名字敲错一个字符，本节点会安静地
+// 【键怎么对上槽 —— **没有表**】
+//   名字**由写的人声明**：本节点按**名字**找（已有就复用、没有就当场开一格 `ClaimSlot`）。
+//   名字就是中间层输出行的 `parameter`（`jawOpen` / `Ho/Drive/Lid/Left` …）。
+//   ⇒ **没有"名字对不上"的校验点了**（表 2026-09-26 删掉）：名字敲错一个字符，本节点会安静地
 //   新开一个槽。发现它的办法是看**新声明**那一行（下面 `状态` 里会点名），或者跑一遍看 Hub 里的名字。
 //
 // 【端口规则】[DataInput] = public 字段；[DataOutput] = public 方法；[Trigger] = 纯按钮。
@@ -43,8 +47,8 @@ namespace HoFaceTracking.Nodes
         public GameObject Character;
 
         /// <summary>
-        /// 语义槽：键 → 值。接「HoFace控制求解」的 `动态参数` 出口。
-        /// 键通常是**语义名**（控制器里的写手声明的），也吃 `#<下标>`（老式纯位置写法）。
+        /// 动态参数：键 → 值。接「HoFace参数处理」的 `参数`（或「Ho合并字典」的 `字典`）。
+        /// 键就是**中间层输出行的 `parameter`**（`jawOpen` / `Ho/Drive/Lid/Left` …），按名字写。
         /// </summary>
         [DataInput(20)]
         [Label("动态参数")]
@@ -70,7 +74,7 @@ namespace HoFaceTracking.Nodes
         /// <summary>那几个名字的前几个（这是"控制器到底声明了什么"的唯一记录 —— 表删了之后就靠它）。</summary>
         private readonly List<string> claimedSamples = new List<string>();
 
-        /// <summary>被跳过的键的前几个（键既不是名字又不像 `#下标`）。</summary>
+        /// <summary>被跳过的键的前几个（空名字，写不进去）。</summary>
         private readonly List<string> skippedSamples = new List<string>();
 
         private string loggedState;
@@ -128,7 +132,7 @@ namespace HoFaceTracking.Nodes
             string text = "Connector：" + (connectorOwner != null ? connectorOwner.name : "?")
                 + "  ·  Hub：" + hub.name + "（" + hub.SlotCount + " 个槽）"
                 + "\n本帧：写入 " + written + " 个"
-                + (skippedLastFrame > 0 ? "  ·  跳过 " + skippedLastFrame + " 个（键既不是 `#下标`、也不是能用的名字）" : "");
+                + (skippedLastFrame > 0 ? "  ·  跳过 " + skippedLastFrame + " 个（键是空的）" : "");
 
             if (claimedLastFrame > 0)
             {
@@ -136,7 +140,7 @@ namespace HoFaceTracking.Nodes
                 // 名字敲错一个字符时，这里会安静地多出一个新名字 —— 所以要点名。
                 text += "\n⚠ 新声明 " + claimedLastFrame + " 个名字：" + Join(claimedSamples)
                     + (claimedLastFrame > claimedSamples.Count ? "…" : "")
-                    + "（控制器里写手填的语义名，角色 Hub 上刚开出来的槽）";
+                    + "（中间层输出行的名字，角色 Hub 上刚开出来的槽）";
             }
 
             if (skippedLastFrame > 0 && skippedSamples.Count > 0)
@@ -144,7 +148,7 @@ namespace HoFaceTracking.Nodes
                     + (skippedLastFrame > skippedSamples.Count ? "…" : "");
 
             if (hub.SlotCount == 0)
-                text += "\n⚠ 本帧既没有名字、也没有 `#下标` ⇒ 一个槽都没开出来。";
+                text += "\n⚠ 本帧一个名字都没收到 ⇒ 一个槽都没开出来。";
 
             return text;
         }
@@ -219,25 +223,12 @@ namespace HoFaceTracking.Nodes
         }
 
         /// <summary>
-        /// 键 → 下标。
-        /// · `#<下标>`（硬约定）：把 Hub 开到那个长度，直接用那个下标；
-        /// · 别的都当**名字**：已有就复用，没有就**当场开一格**（名字由控制器里的写手声明，本节点只是照抄）。
-        /// 键为空返回 −1（**跳过**，不是写 0 —— "没声明这个槽"和"显式写 0"是两件事）。
+        /// 键 → 下标。键就是**名字**（中间层输出行的 `parameter`）：已有就复用，没有就**当场开一格**。
+        /// 键为空返回 −1（**跳过**，不是写 0 —— "没这个参数"和"显式写 0"是两件事）。
         /// </summary>
         private int Resolve(string key)
         {
             if (string.IsNullOrEmpty(key)) return -1;
-
-            if (key[0] == '#')
-            {
-                int index;
-                if (int.TryParse(key.Substring(1), out index) && index >= 0)
-                {
-                    hub.Reserve(index + 1);
-                    return index;
-                }
-                return -1;
-            }
 
             int byName = hub.IndexOfName(key);
             if (byName >= 0) return byName;
