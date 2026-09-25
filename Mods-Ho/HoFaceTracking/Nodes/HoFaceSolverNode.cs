@@ -17,9 +17,12 @@
 // 那是「HoFace参数处理」的知识；别的来源（VB 等）按自己的规矩给这个 bool。
 // **不接线时默认 `true`** —— 因为 VB 那条路通常只接 `参数`，而官方那张图要靠 `Is Tracked` 才肯应用。
 //
-// 【为什么没有"影子 Animator"】见 `Core/HoFaceSolver.cs` 与 Unity 侧的控制器结构文档：
-// 插件 Mod 不能读盘、不能带已编译资源，而 Unity 播放器无法从文件加载 AnimatorController。
-//
+// 【`HoFaceSolver` 为什么只管头/根位置】它不跑控制器 —— 形状与骨骼**由控制器负责**（`Core/HoFaceController.cs`：
+// 从插件沙箱读 bundle、`LoadFromMemory`、在隐藏影子上跑真 `AnimatorController`，再采结果）。
+// 求解器留在这一层只做一件事：把参数里的保留名（`Head/Rot*`、`Head/Pos*`、`Root/Pos*`）装配成头位/根位。
+// ⚠️ 历史：早期 Warudo 侧根本跑不了控制器（插件 Mod 不能用 `System.IO` 读任意路径，而沙箱里也没有 bundle
+// 这条路），那时"数据树"是唯一选择；现在控制器是**唯一**求值路径（见 README §1.1.3），
+// 没有可用控制器就 5 个输出口全中性。
 // 【端口规则】[DataInput] = public 字段；[DataOutput] = public 方法。
 // ⚠️ 数据输入别叫 Name（撞 Node 基类成员，CS0108）。字段名 `Plugin` 也别用（撞 Node.Plugin 属性）。
 

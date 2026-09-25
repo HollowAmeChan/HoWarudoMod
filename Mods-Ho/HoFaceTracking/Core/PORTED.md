@@ -33,7 +33,7 @@
 |---|---|
 | `HoFaceChain.cs` | **参数层**的运行期求值器（Warudo 侧）：裸线名 → 规范参数，出口是一份字典 |
 | `HoFaceSolver.cs` | **控制求解**：从参数反求动画输出（融合形状 / 头姿 / 头位 / 根位 / 骨骼数组）。**零配置** |
-| `HoFaceController.cs` | **控制器模式（可选）**：从 AssetBundle 读一个真 `AnimatorController` + 它绑定的 rig，在隐藏影子上跑、采结果。**沙箱是否放行 AssetBundle 还没验** |
+| `HoFaceController.cs` | **控制器模式（唯一求值路径）**：从插件沙箱读 bundle（`ReadFileBytes` → `LoadFromMemory`）、跑真 `AnimatorController` + 它绑定的 rig、在隐藏影子上采结果。**✅ 已实测**：沙箱放行 AssetBundle、参数写进去、混合树解算、形状采回来整条通（见 mod `README.md` §1.1.2） |
 | `HoFaceInputState.cs` | 最近一帧的共享状态 + 接收器统计（接收器写、节点读，唯一交接点）；**两条来源互斥**（手机 / VTS 服务端） |
 | `HoVtsIphoneReceiver.cs` | VTS 手机接收器：UDP + `iOSTrackingDataRequest`，主线程轮询、**没有线程** |
 | `HoFaceProfileStore.cs` | 插件沙箱目录里 `*.hoface.json` 的列表与读取（只能用 `GetFileEntries`） |
