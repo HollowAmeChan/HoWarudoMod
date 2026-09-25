@@ -95,12 +95,6 @@ namespace HoFaceTracking.Core
         /// <summary>采样那次日志写过了没有（见 `Solve` 的第 ⑤ 步）。</summary>
         private bool _loggedSample;
 
-        /// <summary>②b 对照实验：额外推几帧时间（0 = 关掉实验）。</summary>
-        private const int NudgeFrames = 5;
-
-        /// <summary>②b 对照实验走到第几步了。</summary>
-        private int _nudgeStep;
-
         private readonly string[] _matchedNames = new string[ReportLimit];
         private readonly float[] _matchedValues = new float[ReportLimit];
 
@@ -379,18 +373,12 @@ namespace HoFaceTracking.Core
             MatchedText = BuildMatchedText(matched);
 
             // ② 求值（时间步 0：我们要的是"当前参数下的姿势"，不是推进动画）
+            //
+            // ✅ 2026-09-25 实测确认：`Update(0f)` **会**把混合树的解算结果落到网格上 ——
+            //    单层 2D 树那版采到 `写入 jawOpen 0.186 / mouthSmileLeft 0.096 → jawOpen 0.2673 / mouthSmileLeft 0.2194`，
+            //    两个形状都动了。曾经怀疑"时间不推进就不采样"，为此加过一次 `Update(1/60)` 逐步对照实验，
+            //    结论是**两版都一样**（0.0000 那次是旧的两层 bundle 的问题），实验已删。
             _animator.Update(0f);
-
-            // ②b **一次性对照实验**：`Update(0f)` 不推进时间，只求值。如果某条混合树/某个属性
-            //     在"时间没动"时不被采样，表现就正好是"参数写进去了、形状恒 0"。
-            //     所以头几帧额外推一点点时间，把每一步采到的权重写进日志 —— 形状会不会因为
-            //     "时间动了"而出现，一次就看清（`NudgeFrames` 之后不再推，恢复原行为）。
-            bool nudging = false;
-            if (_nudgeStep < NudgeFrames && matched > 0)
-            {
-                nudging = true;
-                _nudgeStep++;
-            }
 
             // ③ 采融合形状（Unity 是 0..100 → 我们 0..1）
             BlendShapes.Clear();
@@ -413,15 +401,13 @@ namespace HoFaceTracking.Core
             }
             _restCaptured = true;
 
-            if (nudging)
-            {
-                LogNudgeStep();
-                return;                      // 这一帧先不推时间，下一帧从同样的参数再采一次
-            }
-
             // ⑤ 采样结果写一次日志（**只写一次**，只在"有输入"时）。
             // 为什么要有它：`状态`/`BlendShapes` 两个口都得接线才看得见，而"控制器到底动没动"
             // 是每次联调的第一个问题。写一次就够了 —— 它报的是"某一帧采到什么"，不是每帧变化。
+            //
+            // ⚠️ 读法：**`写入` 不等于 `采到`**，这不是错。采到的是"控制器这条混合树这一帧的输出"
+            // （我们的调试树是四角双线性插值，所以两个形状会互相掺；真实控制器可能只挂一个形状、
+            // 或者带自己的曲线）。要判断的是"它跟着输入动没动"，不是"它等于参数"。
             if (!_loggedSample && !string.IsNullOrEmpty(MatchedText))
             {
                 _loggedSample = true;
@@ -436,25 +422,6 @@ namespace HoFaceTracking.Core
                 }
                 Debug.Log(line.ToString());
             }
-        }
-
-        /// <summary>`Update(0f)` / `Update(1/60)` / … 每一步采到多少 —— 见 `Solve` 的 ②b。</summary>
-        private void LogNudgeStep()
-        {
-            var line = new StringBuilder();
-            line.Append("[Ho 面捕] 采样对照 step ").Append(_nudgeStep).Append('/').Append(NudgeFrames)
-                .Append(" 写入 ").Append(MatchedText).Append("  →  ");
-            bool first = true;
-            foreach (var pair in BlendShapes)
-            {
-                if (!first) line.Append(" / ");
-                line.Append(pair.Key).Append(' ').Append(pair.Value.ToString("F4"));
-                first = false;
-            }
-            Debug.Log(line.ToString());
-
-            // 推一点点时间，看下一帧采到的会不会变
-            _animator.Update(1f / 60f);
         }
 
         /// <summary>释放：销毁影子、卸掉 bundle。</summary>
@@ -484,7 +451,6 @@ namespace HoFaceTracking.Core
             MatchedText = null;
             Report = null;
             _loggedSample = false;
-            _nudgeStep = 0;
             _restCaptured = false;
         }
 

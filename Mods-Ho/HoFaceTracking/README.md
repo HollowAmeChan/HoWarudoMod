@@ -184,10 +184,8 @@
 
 ```
 [Ho 面捕] 控制器 已载入：hoface-controller-test.bundle（参数 2 个，形状 2 个，网格 1 个）
-          · 自检 shapes[jawOpen,mouthSmileLeft] · roundtrip 0.0→37→37.0 可写✓ · state=-1355318274 t=0.00 · clip 4 [corner_00][corner_10][corner_01][corner_11]
-[Ho 面捕] 采样对照 step 1/5 写入 jawOpen 0.118 / mouthSmileLeft 0.423  →  jawOpen 0.0000 / mouthSmileLeft 0.0000
-…
-[Ho 面捕] 控制器采样 写入 jawOpen 0.118 / mouthSmileLeft 0.423  →  采到 jawOpen 0.0000 / mouthSmileLeft 0.0000
+          · 自检 shapes[jawOpen,mouthSmileLeft] · roundtrip 0.0→37→37.0 可写✓ · state=747672841 t=0.00 · clip 4 [corner_00][corner_10][corner_01][corner_11]
+[Ho 面捕] 控制器采样 写入 jawOpen 0.186 / mouthSmileLeft 0.096  →  采到 jawOpen 0.2673 / mouthSmileLeft 0.2194
 ```
 
 判据：
@@ -195,17 +193,17 @@
 * `shapes[…]` = 网格上**真实存在**的形状名（原因③：没有这个形状名时 `GetBlendShapeWeight` 按名字取不到，
   控制器写了 `blendShape.foo` 也不报错，那格永远 0）。
 * `roundtrip 可写✓` = **绕开 Animator** 的"写 37 → 立刻读回 → 还原"，验代理网格本身动不动。
-* `clip N [...]` = 打进来的控制器里有哪几条 clip —— **回答"bundle 真是我这一版造的吗"**：
-  第一版是两条 `jawOpen_0/100`（两层），现在这版是四条 `corner_00/10/01/11`（单层 2D 树）。
+* `state=<哈希>` = 当前状态全路径哈希 —— **"bundle 换没换"最省事的一眼**（同一条树同一个状态哈希是稳定的；
+  2026-09-25 就是靠它一眼看出 Warudo 读的还是旧 bundle：`-1524225084` 从头到尾没变）。
+* `clip N [...]` = 打进来的控制器里有哪几条 clip。第一版是两条 `jawOpen_0/100`（两层），
+  现在是四条 `corner_00/10/01/11`（单层 2D 树）。
   ⚠️ 只能报名字，**报不了绑定**：`AnimationClip` 的绑定运行期枚举不了（`AnimationUtility` 是编辑器专属），
   而且 `AnimatorController.layers` 那个类型**运行期不存在**（2026-09-25 实测：`UnityEngine.AnimationModule` 里
   只有 `AnimatorControllerParameter` / `…ParameterType` / `AnimatorOverrideController` / `RuntimeAnimatorController` /
   `Animations.AnimatorControllerPlayable`）。本地编译时想写 `.layers` 会直接 `CS0234`。
-* `采样对照 step n/5` = **一次性对照实验**（`Solve` 的 ②b）：`Update(0f)` 不推进时间、只求值；
-  如果某个属性在"时间没动"时不被采样，表现就正好是"参数写进去了、形状恒 0"。
-  所以头 5 帧额外推 `1/60` 秒，把每一步采到的权重写出来 —— **权重会不会因为"时间动了"而出现，一次看清**。
-  实验跑完（5 帧）就恢复 `Update(0f)`。
-* 两个 `mouthSmileLeft` 一个 0.423 一个 0.0000 = 原因②实锤（参数到位、控制器没推到网格上）。
+* ⚠️ **`写入` ≠ `采到`，这不是错**：采到的是"控制器这条树这一帧的输出"。调试树是四角双线性插值，
+  两个形状必然互相掺（`写入 0.186/0.096` 采到 `0.267/0.219` 就是这个缘故）；真实控制器可能只挂一个形状、
+  或者带自己的曲线。**要判断的是"它跟着输入动没动"，不是"它等于参数"。**
 
 **❓ 还没验证的（第一次真机跑就看这几条）**：
 
@@ -360,14 +358,39 @@
   `写入 jawOpen 0.118 / mouthSmileLeft 0.423`（**参数确实写进 Animator 了**）、
   `roundtrip … 可写✓`（**网格本身能写**）、`shapes[jawOpen,mouthSmileLeft]`（**名字都在**），
   但采到仍是 0 —— 三条原因全排掉，剩下的缝就在"Animator 求值 → 写网格"之间。
-  于是加了两条更细的观测（这一轮）：
-  **②b 对照实验**（`Update(0f)` vs `Update(1/60)` 各采一遍）与 **`clip N [...]`**（bundle 里是哪几条 clip）。
-  ⚠️ 顺带纠正我自己一条错写法：想报"控制器几层"时写了 `AnimatorController.layers`，
-  那个类型**运行期不存在**（只有 `RuntimeAnimatorController`，它只公开 `animationClips`）——
-  本地 `compile-check.ps1` 立刻 `CS0234` 拦下。
-* ❓ **仍未定论**：`Update(0f)` 在有状态机时到底会不会把混合树的解算结果落到 `SkinnedMeshRenderer` 上。
-  已知的间接证据是**负面**的：`jawOpen = 0.0653` 那次是**参数层**的 dump，不是采集回来的；
-  采集回来的 `jawOpen` 一直 ≤ `0.004`（且参数层同期常常是 0.000~0.05，所以那次也说明不了什么）。
+* ✅ **结案（2026-09-25，同一轮的后半段）**：真因是**第一版 bundle 的两层结构**（第二层把第一层的形状顶掉）。
+  换成单层一条 2D 树后实测：
+
+  ```
+  写入 jawOpen 0.186 / mouthSmileLeft 0.096  →  采到 jawOpen 0.2673 / mouthSmileLeft 0.2194
+  写入 jawOpen 0.071 / mouthSmileLeft 0.105  →  采到 jawOpen 0.1605 / mouthSmileLeft 0.1726
+  ```
+
+  `mouthSmileLeft` 不再是 0，而且两个形状都**跟着输入动**。
+  顺带否掉一个曾经的怀疑：`Update(0f)`（时间不推进）**照样会把混合树解算结果落到网格上** ——
+  为此加的 `Update(0f)` vs `Update(1/60)` 逐步对照实验**两版结果完全一样**（0.0000 那次纯粹是旧 bundle），
+  实验已删（查完就删）。
+
+### 1.7 这次卡最久的**不是代码，是部署**（2026-09-25）
+
+两处"以为生效了、其实没有"，都用**时间戳**一眼可查：
+
+| 东西 | Warudo 实际读的 | 工作区刚生成的 | 症状 |
+|---|---|---|---|
+| 控制器 bundle | `…\Plugins\Data\hollow.hofacetracking\hoface-controller-test.bundle` | `<工程根>\_hodebug\hoface-controller-test.bundle` | `state=<哈希>` **一直不变**，`clip` 条数/名字也不变 |
+| mod 代码 | `…\Warudo_Data\StreamingAssets\Plugins\HoFaceTracking.warudo` | `Mods-Ho/HoFaceTracking/*.cs` | 新加的日志行**一条都不出现** |
+
+* 菜单 `造调试用控制器 bundle` 只往 **`_hodebug`（工程根）** 写；那**不是** Warudo 读的沙箱目录。
+  打完必须**自己复制**到 `Warudo_Data\StreamingAssets\Plugins\Data\hollow.hofacetracking\`。
+  （沙箱路径就是「HoFace参数处理」`状态` 口里那个 `Root`。）
+* `.warudo` 是**打包产物**：改了 `.cs` 不重新打包，Warudo 加载的还是旧 DLL。
+  ⚠️ 判据：`HoFaceTracking.warudo` 的 mtime **必须晚于**你最后改的 `.cs`。
+* 还有一层：`HoFaceController.Prepare` 对**同一路径**直接返回，所以**换了 bundle 文件也必须按 `重读控制器`**。
+* 👉 **一眼确认清单**（顺序照做，每步都有可见判据）：
+  1. `HoFaceTracking.warudo` mtime > 最后一次改 `.cs` 的时间；
+  2. 沙箱里 bundle 的 mtime > 重打那次的时间；
+  3. 节点上按 `重读控制器`；
+  4. `Player.log` 里自检行的 `state=<哈希>` 变了、`clip` 名字变了 ⇒ 新东西真进去了。
 
 ---
 
