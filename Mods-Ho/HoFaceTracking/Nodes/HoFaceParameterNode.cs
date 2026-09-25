@@ -69,9 +69,31 @@ namespace HoFaceTracking.Nodes
         private string chainKey;
         private int evaluatedFrame = -1;
         private string profileNote;
+        private float lastDumpAt;
 
         /// <summary>上一次已经打进日志的那行状态 —— 只在**变了**的时候才写日志，免得每帧刷屏。</summary>
         private string loggedState;
+
+        /// <summary>
+        /// **持续 dump**的状态（见 <see cref="DumpInterval"/>）。
+        ///
+        /// 为什么要持续而不是"抓一次就停"：手动按「重读配置」极难卡在正确的时机上
+        /// —— 手机丢追时照样发那 15 个标量，"15 个键"和"65 个键"在按下去那一瞬间看不出区别，
+        /// 实测两次手动 dump 都落在掉脸帧上、58 行全是 0，白跑一轮。
+        ///
+        /// 而两份「Ho调试日志」（一个接原始值、一个接出口参数）**对不上同一帧**：它们各自
+        /// 10 Hz 去上游要值，两次采样之间隔了好几帧（实测差 85 帧），拿来做"逐条对值"是错的。
+        /// 这里的 dump **两份值取自同一次求值**，所以天生逐帧对齐 —— 这才是能拿来核对的现场。
+        ///
+        /// 丢脸时重新计数，于是"抬手 → 重新露脸"会再来一轮。
+        /// </summary>
+        private int dumpedInThisTake;
+
+        /// <summary>两份 dump 之间隔多久（秒）。</summary>
+        private const float DumpInterval = 1.0f;
+
+        /// <summary>一轮（一次连续有脸）最多打几份 —— 够看清动向，又不至于把日志写爆。</summary>
+        private const int DumpPerTake = 6;
 
         /// <summary>
         /// 一帧只算一次，且**谁先读谁触发**。
@@ -150,6 +172,35 @@ namespace HoFaceTracking.Nodes
                     + (chain != null && chain.Error != null ? "\n  ⚠ 配置问题：" + chain.Error : ""));
             }
 
+            // 有脸期间**持续** dump（两份值取自同一次求值 ⇒ 逐帧对齐，见 dumpedInThisTake）。
+            bool tracked = Tracked();
+            if (tracked && dumpedInThisTake < DumpPerTake
+                && (dumpedInThisTake == 0 || Time.realtimeSinceStartup - lastDumpAt >= DumpInterval))
+            {
+                dumpedInThisTake++;
+                lastDumpAt = Time.realtimeSinceStartup;
+                Debug.Log("[Ho 面捕] 参数处理 自动 dump #" + dumpedInThisTake + "（新鲜 + 有脸）：输入 "
+                    + (Raw != null ? Raw.Count : 0) + " 条 / 出口 " + (chain != null ? chain.OutputRowCount : 0) + " 行\n"
+                    + "── 原始线名（接收器交出来的原值）──\n" + DumpRaw()
+                    + "── 出口参数（按名字排序）──\n" + PreviewText());
+            }
+
+            // 这一帧掉脸/断流 ⇒ 下一轮露脸重新来过（可以对比两轮）。
+            if (!tracked) dumpedInThisTake = 0;
+        }
+
+        /// <summary>原始线名 → 原值，一行一条（名字排序，便于和出口那份对着看）。</summary>
+        private string DumpRaw()
+        {
+            if (Raw == null || Raw.Count == 0) return "  （空）\n";
+
+            var names = new List<string>(Raw.Keys);
+            names.Sort(System.StringComparer.Ordinal);
+
+            var text = new System.Text.StringBuilder();
+            for (int i = 0; i < names.Count; i++)
+                text.Append("  ").Append(names[i]).Append(" = ").Append(Raw[names[i]].ToString("F4")).Append('\n');
+            return text.ToString();
         }
 
         /// <summary>拼状态行（**不触发求值** —— 供 <see cref="Resolve"/> 内部与日志用）。</summary>

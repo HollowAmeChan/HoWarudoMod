@@ -66,6 +66,11 @@
 //   · 连线变了就写一行：`[Ho 调试日志] 输入连线：「A」←「…」.RawValues`
 //     —— 孤儿线会带一句 `（这个输入口已经不存在了 → 删掉这条线重接）`（判据：`InputPort == null`）。
 //   · 还没拿到值的时候，每秒写一行当前状态（直读拿到了什么、端口里有没有）——"接上了却没值"靠它定性。
+//
+// 【想抓"运行中每一帧"的现场：把「写日志」开关打开】
+//   打开后每 0.5 s 把当前这份值**原样**写进 `Player.log`（前缀 `[Ho 调试日志] `），值停住也写
+//   —— 停顿本身是情报（"卡在 0 不动"、"丢脸后还是老值"）。界面上那块只留最后一帧、没法两份对照，
+//   所以"原始值 vs 输出值逐条对"要在日志里做。查完关掉。
 
 using System.Collections.Generic;
 using System.Text;
@@ -119,8 +124,38 @@ namespace HoFaceTracking.Nodes
         private float _lastWiringCheck;
         private float _lastDiag;
         private float _lastRead;
+        private float _lastLogged;
         private bool _displayWired;         // 上游接在显示那一行上
         private bool _gotValue;
+
+        /// <summary>
+        /// **持续写日志**的开关。打开后，这个节点每 <see cref="LogInterval"/> 秒把当前这份值
+        /// 原样写进 `Player.log`（带上游给它的原文，含换行），于是"运行中的每一帧"都能事后在日志里读。
+        ///
+        /// 为什么不用界面那块看：它只保留**最后一帧**，而且值一变就重画 —— 查"原始值 vs 输出值
+        /// 是不是逐条对上"要的是**同一帧的两份值**，界面上没法对照。
+        ///
+        /// ⚠️ **默认关**（`false`）。只有你手动打开才写日志 —— 排查用完记得关回去。
+        /// </summary>
+        [DataInput(11)]
+        [Label("写日志")]
+        [Description("打开：每 0.5 s 把当前这份值原样写进 Player.log（排查用，查完关掉）。")]
+        public bool LogToFile = false;
+
+        /// <summary>
+        /// 多久往日志里写一行（秒）。0.5 s 足够看清"值在动/卡住"，又不至于把日志刷爆。
+        /// </summary>
+        private const float LogInterval = 0.5f;
+
+        /// <summary>
+        /// 这行日志的**出处标签**。放两个「Ho调试日志」（一个接原始值、一个接出口参数）时，
+        /// 日志里就会有 `[Ho 调试日志] 原始 ← …` / `[Ho 调试日志] 出口 ← …`，不用回头猜哪行是谁打的。
+        /// 留空就写 `-`。**不是必填**：只有写日志那一行用到它。
+        /// </summary>
+        [DataInput(12)]
+        [Label("标签")]
+        [Description("写进日志时给这一行加个出处（例如「原始」「出口」）。留空写 `-`。")]
+        public string Tag = "";
 
         /// <summary>
         /// 多久去上游要一次值（秒）。**不是每帧** —— 理由见下面的"直读的代价"。
@@ -176,17 +211,41 @@ namespace HoFaceTracking.Nodes
                 return;
             }
 
-            if (next == _raw) return;
-
-            _raw = next;
-            Text = ToMarkdown(next);
-            BroadcastDataInput(nameof(Text));   // ← 少了这一句界面不会重画（实测）
+            bool changed = next != _raw;
+            if (changed)
+            {
+                _raw = next;
+                Text = ToMarkdown(next);
+                BroadcastDataInput(nameof(Text));   // ← 少了这一句界面不会重画（实测）
+            }
 
             if (!_gotValue)
             {
                 _gotValue = true;
                 Debug.Log("[Ho 调试日志] 第一次拿到值：" + next.Length + " 个字符（" + source + "）");
             }
+
+            // 持续写日志（开关打开时）。**故意不等值变化**：值不变本身也是情报
+            //（比如"卡在 0 不动"、"丢脸之后还是老值"），而那正是要抓的现场。
+            if (LogToFile) WriteToLog(now, next);
+        }
+
+        /// <summary>
+        /// 持续把当前这份值写进 `Player.log`（不是写在界面上 —— 界面那块只显示最新的一份）。
+        ///
+        /// 为什么要它：界面上那块只留**最后一帧**，而"原始值 vs 输出值逐条对"要的是
+        /// **同一帧的两份**。自动 dump 那种"抓到一次就停"的做法还要赌时机（丢脸时手机照样发 15 个标量，
+        /// 一眼看不出是不是有脸帧），所以改成"想看就一直打"。
+        ///
+        /// 节奏 = 直读的节奏（<see cref="ReadInterval"/>，10 Hz），再压一层 <see cref="LogInterval"/>：
+        /// 值在动的时候每 0.5 s 一行，**值停下时也会写**（停顿同样要看得出）。
+        /// 一行 ~1.3 KB，开着时的量按 2 行/秒算 ≈ 2.6 KB/s —— 查完就关掉。
+        /// </summary>
+        private void WriteToLog(float now, string text)
+        {
+            if (now - _lastLogged < LogInterval) return;
+            _lastLogged = now;
+            Debug.Log("[Ho 调试日志] " + (string.IsNullOrEmpty(Tag) ? "-" : Tag) + " ←\n" + text);
         }
 
         /// <summary>
