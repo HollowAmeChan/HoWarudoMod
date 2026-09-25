@@ -49,19 +49,14 @@ namespace HoFaceTracking.Nodes
         [Label("动态参数")]
         public Dictionary<string, float> Values = new Dictionary<string, float>();
 
-        /// <summary>
-        /// 找不到 Hub 时要不要**自动加一个**。
-        /// 默认关：往角色上自动加组件是"改用户的东西"，跟他没要求就动他的角色一样糟。
-        /// 真需要时在节点上手动打开，并明确知道自己在改什么。
-        /// </summary>
-        [DataInput(30)]
-        [Label("找不到就自动加 Hub")]
-        public bool AutoAdd = false;
+        // ── 缓存 ────────────────────────────────────────────────────────────────
 
-        // ── 状态 ────────────────────────────────────────────────────────────────
-
+        /// <summary>找到的那个 Hub（**角色身上的**，不是影子那份）。</summary>
         private HoFaceSemanticHub hub;
+
+        /// <summary>Hub 所在的对象。用它判断"角色换了没有"，也是状态行里报给用户的名字。</summary>
         private GameObject hubOwner;
+
         private int writtenLastFrame;
         private int skippedLastFrame;
         private string loggedState;
@@ -107,9 +102,8 @@ namespace HoFaceTracking.Nodes
 
             if (hub == null)
                 return "⚠ 这个角色上没有 HoFaceSemanticHub"
-                    + (AutoAdd ? "（已打开自动加，下一帧会加一个 —— 但**没挂资产**，等于只有下标、没有名字）"
-                               : " —— 在角色 mod 里加一个空物体挂上它（约定叫 `SemanticHub`），"
-                                 + "或者打开上面的「找不到就自动加 Hub」");
+                    + " —— 在角色 mod 里加一个空物体挂上它（约定叫 `SemanticHub`），"
+                    + "并指向那份动态参数资产。**本节点不会替你建**。";
 
             int written = Apply();
             string text = "Hub：" + (hubOwner != null ? hubOwner.name : "?")
@@ -140,6 +134,10 @@ namespace HoFaceTracking.Nodes
         /// <summary>
         /// 找角色上的 Hub。**只在缓存失效时找一次**（每帧 `GetComponentInChildren` 是白费）。
         /// 角色被换掉（引用变了）或 Hub 被删了，都会重新找。
+        ///
+        /// ⚠️ **找不到就是找不到，本节点绝不替你建一个。** 往用户的角色上自动加组件是"改他的东西"，
+        /// 而且建出来的那个没挂资产、只有下标没有名字，只会让后面更难查。
+        /// （Unity 侧调试面板同一条口径：只找不建。）
         /// </summary>
         private void EnsureHub()
         {
@@ -150,16 +148,6 @@ namespace HoFaceTracking.Nodes
 
             hub = Character.GetComponentInChildren<HoFaceSemanticHub>(true);
             hubOwner = hub != null ? hub.gameObject : null;
-
-            if (hub == null && AutoAdd)
-            {
-                var owner = new GameObject("SemanticHub");
-                owner.transform.SetParent(Character.transform, false);
-                hub = owner.AddComponent<HoFaceSemanticHub>();
-                hubOwner = owner;
-                Debug.LogWarning("[Ho 面捕] 写动态参数：角色上没有 Hub，已自动加在 " + Character.name
-                    + "/SemanticHub。⚠️ 它**没有挂动态参数资产**，所以只有下标、没有名字。");
-            }
 
             if (hub != null) hub.AlignToAsset();   // 长度跟资产对齐（没资产就是空操作）
         }
