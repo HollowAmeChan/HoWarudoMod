@@ -165,6 +165,20 @@ namespace HoFaceTracking.Nodes
             evaluatedFrame = -1;
         }
 
+        /// <summary>
+        /// 打开**插件沙箱目录** —— 也就是 `控制器` 那个下拉列表列的地方、以及 bundle 要放的地方。
+        /// 为什么要它：下拉里是空的（还没放文件）时，"放哪儿"这件事只有文字说明，用户得自己去翻路径。
+        /// </summary>
+        [Trigger(210)]
+        [Label("打开文件夹")]
+        [Description("打开插件沙箱目录（控制器 bundle 放在那儿，也是下拉列表列的地方）。")]
+        public void OpenSandboxFolder()
+        {
+            var owner = this.Plugin as HoFaceTrackingPlugin;
+            if (!HoFaceController.RevealRoot(owner != null ? owner.Files : null))
+                Debug.LogWarning("[Ho 面捕] 打开沙箱目录失败（`状态` 里那个「沙箱：」路径可以手抄）。");
+        }
+
         /// <summary>节点没了（或者图被关掉）就把影子与 bundle 放掉，别留垃圾。</summary>
         protected override void OnDestroy()
         {

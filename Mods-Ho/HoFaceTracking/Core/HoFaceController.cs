@@ -383,6 +383,41 @@ namespace HoFaceTracking.Core
         }
 
         /// <summary>
+        /// 打开**插件沙箱目录**（节点上「打开文件夹」按钮）。
+        ///
+        /// 【为什么用 `Application.OpenURL` 而不是 `Process.Start`】
+        /// `System.Diagnostics.Process` 在 UMod 里是**禁的**（跟 `System.Reflection`、`System.IO` 一样是
+        /// 命名空间/类型级封禁）—— 2026-09-25 我拿探针逐条试过：`System.IO` 被本地 lint 拦下，
+        /// 而 `Application.OpenURL` 过 lint。所以这是**能证明可用**的那一条；
+        /// 对一个目录来说 `file:///D:/...` 会让系统用文件管理器（资源管理器）打开它。
+        ///
+        /// ⚠️ **未在真机验证**：本地查不到"UMod 会不会拦 `Application.OpenURL` 的 `file:` 协议"，
+        /// 也查不到"Warudo 用的是不是系统默认文件管理器"。要是按了没反应，失败也只在这一个方法里，
+        /// 换法是拿 `Plugin.ModHost` 那侧的接口（或者干脆让用户自己开目录）。
+        /// </summary>
+        public static bool RevealRoot(PluginPersistentDataManager files)
+        {
+            if (files == null) return false;
+
+            string root;
+            try { root = files.GetBasePath(); }
+            catch (Exception e) { Debug.LogException(e); return false; }
+
+            if (string.IsNullOrEmpty(root)) return false;
+
+            try
+            {
+                Application.OpenURL("file:///" + root.Replace('\\', '/'));
+                return true;
+            }
+            catch (Exception e)
+            {
+                Debug.LogException(e);
+                return false;
+            }
+        }
+
+        /// <summary>
         /// 把"上一帧写进去的参数"拼成一行（前 <see cref="ReportLimit"/> 个，超出只报数）。
         /// 事件/Trigger 类参数不算"对上"（它们不是这一帧的值，我们不主动触发）。
         /// </summary>

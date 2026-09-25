@@ -192,6 +192,20 @@ namespace HoFaceTracking.Nodes
         }
 
         /// <summary>
+        /// 打开**插件沙箱目录** —— 配置文件放在那儿，也是 `配置文件` 那个下拉列的地方。
+        /// 跟「HoFace控制求解」的 `打开文件夹` 是同一个目录（两边共用一套沙箱）。
+        /// </summary>
+        [Trigger(210)]
+        [Label("打开文件夹")]
+        [Description("打开插件沙箱目录（配置文件放在那儿，也是下拉列表列的地方）。")]
+        public void OpenSandboxFolder()
+        {
+            var owner = this.Plugin as HoFaceTrackingPlugin;
+            if (!HoFaceController.RevealRoot(owner != null ? owner.Files : null))
+                Debug.LogWarning("[Ho 面捕] 打开沙箱目录失败（`状态` 里那个「沙箱：」路径可以手抄）。");
+        }
+
+        /// <summary>
         /// 强制重新列沙箱目录、重新读配置、重新编译链。用于"刚往沙箱里丢了新文件"或
         /// "改完文件想立刻看到"。
         /// </summary>
