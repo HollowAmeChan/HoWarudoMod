@@ -2,7 +2,7 @@
 //
 // 【这条链的两端各在哪】
 //   「HoFace参数处理」的 `参数` 出口（或先过一遍「Ho合并字典」做覆盖）
-//   → **本节点** → 写进**角色身上**那份 Hub（`Character/…/SemanticHub`，旁边挂着 `HoFaceSemanticConnector`）。
+//   → **本节点** → 写进**角色身上**那份 Hub（`Character/…/SemanticHub` 上那个 `HoFaceSemanticHub`）。
 // 也就是说：**写的人就是中间层**（Unity 侧是调试会话写同一份东西：`HoFaceAnimationSession.PublishSemantics`），
 // 控制器只负责"参数 → 形状 / 骨骼"，它不认识、也不再产出任何动态参数。
 //
@@ -20,7 +20,7 @@
 //   名字**由写的人声明**：本节点按**名字**找（已有就复用、没有就当场开一格 `ClaimSlot`）。
 //   名字就是中间层输出行的 `parameter`（`jawOpen` / `Ho/Drive/Lid/Left` …）。
 //   ⇒ **没有"名字对不上"的校验点了**（表 2026-09-26 删掉）：名字敲错一个字符，本节点会安静地
-//   新开一个槽。发现它的办法是看**新声明**那一行（下面 `状态` 里会点名），或者跑一遍看 Hub 里的名字。
+//   新开一格。发现它的办法是看**新声明**那一行（下面 `状态` 里会点名），或者跑一遍看 Hub 里的名字。
 //
 // 【端口规则】[DataInput] = public 字段；[DataOutput] = public 方法；[Trigger] = 纯按钮。
 // ⚠️ 数据输入别叫 Name（撞 Node 基类成员，CS0108）。字段名 `Plugin` 也别用（撞 Node.Plugin 属性）。
@@ -41,7 +41,7 @@ namespace HoFaceTracking.Nodes
     {
         // ── 输入 ────────────────────────────────────────────────────────────────
 
-        /// <summary>要写的角色。Connector（以及它指向的 Hub）挂在这个角色的子层级里（约定：`SemanticHub` 空物体）。</summary>
+        /// <summary>要写的角色。Hub 挂在这个角色的子层级里（约定：一个叫 `SemanticHub` 的空物体）。</summary>
         [DataInput(10)]
         [Label("角色")]
         public GameObject Character;
@@ -56,22 +56,19 @@ namespace HoFaceTracking.Nodes
 
         // ── 缓存 ────────────────────────────────────────────────────────────────
 
-        /// <summary>找到的那个 Connector（**角色身上的**接口）。</summary>
-        private HoFaceSemanticConnector connector;
-
-        /// <summary>Connector 指向的那个 Hub（值在它上面）。Connector 没填 Hub 时是 null。</summary>
+        /// <summary>找到的那个 Hub（值在它上面；它也是**唯一的组件** —— Connector 2026-09-27 删了）。</summary>
         private HoFaceSemanticHub hub;
 
-        /// <summary>Connector 所在的对象。用它判断"角色换了没有"，也是状态行里报给用户的名字。</summary>
-        private GameObject connectorOwner;
+        /// <summary>Hub 所在的对象。用它判断"角色换了没有"，也是状态行里报给用户的名字。</summary>
+        private GameObject hubOwner;
 
         private int writtenLastFrame;
         private int skippedLastFrame;
 
-        /// <summary>本帧**新声明**了几个名字（= 角色那片 Hub 上刚开出来的槽）。</summary>
+        /// <summary>本帧**新声明**了几个名字（= 角色那片 Hub 上刚开出来的格）。</summary>
         private int claimedLastFrame;
 
-        /// <summary>那几个名字的前几个（这是"控制器到底声明了什么"的唯一记录 —— 表删了之后就靠它）。</summary>
+        /// <summary>那几个名字的前几个（这是"到底声明了什么名字"的唯一记录 —— 表删了之后就靠它）。</summary>
         private readonly List<string> claimedSamples = new List<string>();
 
         /// <summary>被跳过的键的前几个（空名字，写不进去）。</summary>
@@ -82,22 +79,21 @@ namespace HoFaceTracking.Nodes
         // ── 按钮 ────────────────────────────────────────────────────────────────
 
         /// <summary>
-        /// 找一次角色上的 Connector（找不到时就报原因）。改完角色结构之后按一下，不用重启。
+        /// 找一次角色上的 Hub（找不到时就报原因）。改完角色结构之后按一下，不用重启。
         /// </summary>
         [Trigger(200)]
-        [Label("重找 Connector")]
-        [Description("丢掉缓存，下一帧重新在角色层级里找一个 HoFaceSemanticConnector（以及它指向的 Hub）。")]
+        [Label("重找 Hub")]
+        [Description("丢掉缓存，下一帧重新在角色层级里找一个 HoFaceSemanticHub。")]
         public void Rebind()
         {
-            connector = null;
             hub = null;
-            connectorOwner = null;
+            hubOwner = null;
             loggedState = null;
         }
 
         // ── 输出 ────────────────────────────────────────────────────────────────
 
-        /// <summary>本帧真写进去了几个槽。</summary>
+        /// <summary>本帧真写进去了几格。</summary>
         [DataOutput]
         [Label("写入数")]
         public int WrittenCount()
@@ -107,7 +103,7 @@ namespace HoFaceTracking.Nodes
         }
 
         /// <summary>
-        /// 状态：找到 Connector 没有、Hub 有几个槽、本帧写了几个、跳过了几个、**新声明了哪几个名字**。
+        /// 状态：找到 Hub 没有、有几格、本帧写了几个、跳过了几个、**新声明了哪几个名字**。
         /// **它是唯一的报错出口**（这个节点没有 flow 口，没法抛异常）。
         /// </summary>
         [DataOutput]
@@ -117,20 +113,16 @@ namespace HoFaceTracking.Nodes
             EnsureHub();
 
             if (Character == null)
-                return "⚠ 没选角色 —— 动态参数写不进去（Connector 挂在角色的子层级里）。";
-
-            if (connector == null)
-                return "⚠ 这个角色上没有 HoFaceSemanticConnector"
-                    + " —— 在角色 mod 里加一个空物体挂上它（约定叫 `SemanticHub`），并在它上面填好 Hub。"
-                    + "**本节点不会替你建**。";
+                return "⚠ 没选角色 —— 动态参数写不进去（Hub 挂在角色的子层级里）。";
 
             if (hub == null)
-                return "⚠ Connector「" + connector.name + "」没填 Hub ⇒ 没有槽可以写"
-                    + "（在 Connector 上把同一个物体上的 HoFaceSemanticHub 拖进去）。";
+                return "⚠ 这个角色上没有 HoFaceSemanticHub"
+                    + " —— 在角色 mod 里加一个空物体挂上它（约定叫 `SemanticHub`）。"
+                    + "**本节点不会替你建**。";
 
             int written = Apply();
-            string text = "Connector：" + (connectorOwner != null ? connectorOwner.name : "?")
-                + "  ·  Hub：" + hub.name + "（" + hub.SlotCount + " 个槽）"
+            string text = "Hub：" + (hubOwner != null ? hubOwner.name : "?") + " / " + hub.name
+                + "（" + hub.Count + " 格）"
                 + "\n本帧：写入 " + written + " 个"
                 + (skippedLastFrame > 0 ? "  ·  跳过 " + skippedLastFrame + " 个（键是空的）" : "");
 
@@ -140,58 +132,52 @@ namespace HoFaceTracking.Nodes
                 // 名字敲错一个字符时，这里会安静地多出一个新名字 —— 所以要点名。
                 text += "\n⚠ 新声明 " + claimedLastFrame + " 个名字：" + Join(claimedSamples)
                     + (claimedLastFrame > claimedSamples.Count ? "…" : "")
-                    + "（中间层输出行的名字，角色 Hub 上刚开出来的槽）";
+                    + "（中间层输出行的名字，角色 Hub 上刚开出来的格）";
             }
 
             if (skippedLastFrame > 0 && skippedSamples.Count > 0)
                 text += "\n⚠ 跳过的键里有：" + Join(skippedSamples)
                     + (skippedLastFrame > skippedSamples.Count ? "…" : "");
 
-            if (hub.SlotCount == 0)
-                text += "\n⚠ 本帧一个名字都没收到 ⇒ 一个槽都没开出来。";
+            if (hub.Count == 0)
+                text += "\n⚠ 本帧一个名字都没收到 ⇒ 一格都没开出来。";
 
             return text;
         }
 
         /// <summary>
-        /// 节点没了就把缓存放掉（Hub / Connector 是别人的组件，不需要我们销毁）。
+        /// 节点没了就把缓存放掉（Hub 是别人的组件，不需要我们销毁）。
         /// </summary>
         protected override void OnDestroy()
         {
-            connector = null;
             hub = null;
-            connectorOwner = null;
+            hubOwner = null;
         }
 
         // ── 干活 ────────────────────────────────────────────────────────────────
 
         /// <summary>
-        /// 找角色上的 Connector 与它指向的 Hub。**只在缓存失效时找一次**（每帧 `GetComponentInChildren` 是白费）。
-        /// 角色被换掉（引用变了）或 Connector 被删了，都会重新找。
+        /// 找角色上的 Hub。**只在缓存失效时找一次**（每帧 `GetComponentInChildren` 是白费）。
+        /// 角色被换掉（引用变了）或 Hub 被删了，都会重新找。
         ///
         /// ⚠️ **找不到就是找不到，本节点绝不替你建一个。** 往用户的角色上自动加组件是"改他的东西"，
-        /// 而且建出来的那个没有 Hub、也没有名字，只会让后面更难查。
+        /// 而且建出来的那个也没有名字，只会让后面更难查。
         /// （Unity 侧调试面板同一条口径：只找不建。）
         /// </summary>
         private void EnsureHub()
         {
-            if (Character == null) { connector = null; hub = null; connectorOwner = null; return; }
+            if (Character == null) { hub = null; hubOwner = null; return; }
 
-            // 缓存还有效吗：角色没换、Connector 还活着
-            if (connector != null && connectorOwner != null && connectorOwner == Character)
-            {
-                hub = connector.hub;      // Hub 引用可能在编辑器里被改过，每帧顺手同步一次（不做搜索）
-                return;
-            }
+            // 缓存还有效吗：角色没换、Hub 还活着
+            if (hub != null && hubOwner != null && hubOwner == Character) return;
 
-            connector = Character.GetComponentInChildren<HoFaceSemanticConnector>(true);
-            connectorOwner = connector != null ? connector.gameObject : null;
-            hub = connector != null ? connector.hub : null;
+            hub = Character.GetComponentInChildren<HoFaceSemanticHub>(true);
+            hubOwner = hub != null ? hub.gameObject : null;
         }
 
         /// <summary>
         /// 把 <see cref="Values"/> 写进 Hub。返回真写进去几个。
-        /// **按下标写**（`SetFloat(int, float)`），不做任何反射。
+        /// **按名字写**（`SetFloat(string, float)`：没有那一格就当场开一格），不做任何反射。
         /// </summary>
         private int Apply()
         {
@@ -205,15 +191,21 @@ namespace HoFaceTracking.Nodes
             int written = 0;
             foreach (var pair in Values)
             {
-                int index = Resolve(pair.Key);
-                if (index < 0)
+                if (string.IsNullOrEmpty(pair.Key))
                 {
+                    // **跳过**，不是写 0 —— "没这个参数"和"显式写 0"是两件事。
                     skippedLastFrame++;
-                    if (skippedSamples.Count < 4 && !string.IsNullOrEmpty(pair.Key)) skippedSamples.Add(pair.Key);
+                    if (skippedSamples.Count < 4) skippedSamples.Add(pair.Key ?? "");
                     continue;
                 }
 
-                hub.SetFloat(index, pair.Value);
+                bool isNew = hub.IndexOf(pair.Key) < 0;      // 谁写谁开：名字由写的人声明
+                if (!hub.SetFloat(pair.Key, pair.Value)) { skippedLastFrame++; continue; }
+                if (isNew)
+                {
+                    claimedLastFrame++;
+                    if (claimedSamples.Count < 6) claimedSamples.Add(pair.Key);
+                }
                 written++;
             }
 
@@ -222,27 +214,7 @@ namespace HoFaceTracking.Nodes
             return written;
         }
 
-        /// <summary>
-        /// 键 → 下标。键就是**名字**（中间层输出行的 `parameter`）：已有就复用，没有就**当场开一格**。
-        /// 键为空返回 −1（**跳过**，不是写 0 —— "没这个参数"和"显式写 0"是两件事）。
-        /// </summary>
-        private int Resolve(string key)
-        {
-            if (string.IsNullOrEmpty(key)) return -1;
-
-            int byName = hub.IndexOfName(key);
-            if (byName >= 0) return byName;
-
-            byName = hub.ClaimSlot(key);
-            if (byName >= 0)
-            {
-                claimedLastFrame++;
-                if (claimedSamples.Count < 6) claimedSamples.Add(key);
-            }
-            return byName;
-        }
-
-        /// <summary>把几个名字/下标拼成 `MouthX、MouthY`。</summary>
+        /// <summary>把几个名字拼成 `MouthX、MouthY`。</summary>
         private string Join(List<string> names)
         {
             if (names == null || names.Count == 0) return "—";
@@ -258,7 +230,7 @@ namespace HoFaceTracking.Nodes
         /// <summary>结构变了才写一行日志（键数/槽数/写入数变化时），免得每帧刷屏。</summary>
         private void LogOnce()
         {
-            string state = "槽 " + (hub != null ? hub.SlotCount : 0)
+            string state = "格 " + (hub != null ? hub.Count : 0)
                 + " · 收到 " + (Values != null ? Values.Count : 0)
                 + " · 写入 " + writtenLastFrame + " · 跳过 " + skippedLastFrame
                 + " · 新声明 " + claimedLastFrame;
@@ -266,7 +238,7 @@ namespace HoFaceTracking.Nodes
             loggedState = state;
             Debug.Log("[Ho 面捕] 写动态参数 " + state
                 + (claimedLastFrame > 0 ? "  ·  新名字 " + Join(claimedSamples) : "")
-                + (connector != null && connector.hub == null ? "  ·  ⚠ Connector 没填 Hub" : ""));
+                + (hub == null ? "  ·  ⚠ 角色上没有 HoFaceSemanticHub" : ""));
         }
     }
 }
