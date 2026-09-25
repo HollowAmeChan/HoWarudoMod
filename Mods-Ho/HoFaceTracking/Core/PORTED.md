@@ -17,8 +17,8 @@
 | `HoFaceProfileJson.cs` | `Runtime/FaceTracking/HoFaceProfileJson.cs` | profile 的 JSON 读写（替代 `JsonUtility`） |
 | `HoFaceTrackingChannels.cs` | `Runtime/FaceTracking/HoFaceTrackingChannels.cs` | 52 个规范形态键名（外带区域/模式/平滑分组等枚举） |
 | `HoFaceNaming.cs` | `Runtime/FaceTracking/HoFaceNaming.cs` | 参数命名规则（`Ho/Drive/...`） |
-| `HoFaceSemanticAsset.cs` | `Runtime/FaceTracking/HoFaceSemanticAsset.cs` | **动态参数（语义）定义**：名字、中性值、范围；**顺序即下标** |
-| `HoFaceSemanticHub.cs` | `Runtime/FaceTracking/HoFaceSemanticHub.cs` | **动态参数运行期槽**：`float[]` + 取值/写值/按名解析 |
+| `HoFaceSemanticConnector.cs` | `Runtime/FaceTracking/HoFaceSemanticConnector.cs` | **动态参数（语义）名字**：槽表（`key` / `note`）+ **直接引用** Hub；**顺序即下标**。2026-09-26 用它替掉了原来的 `HoFaceSemanticAsset`（ScriptableObject 资产，已删：不做跨角色共享词表） |
+| `HoFaceSemanticHub.cs` | `Runtime/FaceTracking/HoFaceSemanticHub.cs` | **动态参数运行期槽**：`float[]` + 取值/写值，**预留固定槽位、完全不认识名字** |
 
 **⚠️ 在两边各写一份，是本项目的既定做法 —— 而且不止 Hub 这一处。**
 所以别为这一对单独找"少写一份"的路子：**不搞"只留包侧一份、让 build 填进来"，
@@ -27,9 +27,12 @@
 （原因：两边是**两个 Unity 工程、两个程序集**，Unity 工程之间不能互相引用源码；
 而"Unity 面板里预览到什么，Warudo 里就输出什么"要求这份代码是同一份 —— 见 §3。）
 
-实测（2026-09-25）：`MonoBehaviour` 与 `ScriptableObject` 在 mod 程序集里**编译通过且 lint clean**；
+实测（2026-09-25）：`MonoBehaviour` 与 `ScriptableObject` 在 mod 程序集里**编译通过且 lint clean**
+（2026-09-26 起这 10 份里**已经没有 `ScriptableObject` 了** —— 语义词表从资产改成了 `HoFaceSemanticConnector` 组件）；
 FastBuild 会把 mod 源码复制进包、由 UMod 编译（`Editor/FastBuildWarudoMod`，另有产物校验器专门查这件事）。
 ⚠️ 这两个文件里**故意没有 `#if UNITY_EDITOR`** —— 同步脚本只加文件头、换命名空间，条件编译块会让两边不一致。
+⚠️ 那两个组件是**要在角色预制件上序列化的**，所以字段一律 **public**、
+不用"私有字段 + `[SerializeField]`"（能不能在 mod 程序集里序列化没实测过）。
 
 **唯一被改的是命名空间**：`Hollow.HoUnityTools.FaceTracking` → `HoFaceTracking.Core`
 （脚本第 33–34 行定义、第 63 行做全文替换）。代码本身一个字节都没动。

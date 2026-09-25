@@ -562,17 +562,16 @@ namespace HoFaceTracking.Core
             _restCaptured = true;
 
             // ⑤ 采**语义槽**（动态参数）：控制器曲线写进影子上的 `HoFaceSemanticHub`，我们只读。
-            //    ⚠️ 按**下标**读，不按字段名（UMod 禁反射）。名字只有 Hub 填了资产时才有 ——
-            //    影子上的那份通常没资产，所以就报下标（`#0`/`#1`），名字由节点侧那张资产去解释。
+            //    ⚠️ 按**下标**读，不按字段名（UMod 禁反射）。影子那份是**代理**：Hub **根本不认识名字**
+            //    （名字在角色那边的 `HoFaceSemanticConnector` 上），所以这里一律报下标 `#0`/`#1`…
+            //    —— 名字由「HoFace写动态参数」节点按角色的槽表去解释。
+            //    ⚠️ 槽位是**预留**的（128 个），所以这里会把整片槽都报出去（大多数恒为 0）：
+            //    这是有意的 —— 谁在写、写了几个是运行期**唯一**能观测到的事实（曲线绑定枚举不了）。
             HubValues.Clear();
             if (_hub != null && _hub.values != null)
             {
                 for (int i = 0; i < _hub.values.Length; i++)
-                {
-                    string key = _hub.KeyAt(i);
-                    if (string.IsNullOrEmpty(key)) key = "#" + i;
-                    HubValues[key] = _hub.values[i];
-                }
+                    HubValues["#" + i] = _hub.values[i];
             }
 
             // ⑤ 采样结果写一次日志（**只写一次**，只在"有输入"时）。
