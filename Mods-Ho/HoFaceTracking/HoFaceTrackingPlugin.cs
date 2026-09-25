@@ -46,7 +46,10 @@ namespace HoFaceTracking.PluginMod
             typeof(HoFaceParameterNode),
             typeof(HoFaceSolverNode),
             typeof(HoFaceHubWriteNode),
-            typeof(HoDebugLogNode)
+            typeof(HoDebugLogNode),
+            // 通用节点（不是面捕专用，只是暂时放在这个 mod 里）：两块"名字 → 浮点"的表合并/覆盖。
+            // 用途见文件头：把控制器里恒 1 的门控用 merge 的方式关掉（覆盖发生在参数输出之后、写进控制器之前）。
+            typeof(HoDictionaryMergeNode)
         })]
     public class HoFaceTrackingPlugin : Plugin
     {

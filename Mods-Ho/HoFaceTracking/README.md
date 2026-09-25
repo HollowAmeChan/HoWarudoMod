@@ -25,10 +25,10 @@
 |---|---|
 | `[PluginType] Id` | `hollow.hofacetracking`（也是沙箱目录名） |
 | Name / Version | `Ho Face Tracking` / `0.2.0` |
-| NodeTypes | 5 个（见下表） |
+| NodeTypes | 6 个（见下表） |
 | 命名空间 | `HoFaceTracking.PluginMod`（**不要**叫 `...Plugin`：会遮蔽 `Plugin` 基类，CS0118，见 `HoFaceTrackingPlugin.cs:20-21`） |
 
-### 1.1 节点（5 个，一个 Mod 全包了）
+### 1.1 节点（6 个，一个 Mod 全包了）
 
 | 节点（代码） | 面板标题 | 状态 | 干什么 |
 |---|---|---|---|
@@ -37,6 +37,7 @@
 | `Nodes/HoFaceSolverNode.cs` | HoFace控制求解 | **正式** | **从参数反求动画输出**（零配置）：官方同形的 5 个口 + `动态参数` + 一个 `状态`（**7 个输出口**） |
 | `Nodes/HoFaceHubWriteNode.cs` | HoFace写动态参数 | **正式** | 把 `动态参数` 出口写进**角色身上**的 `HoFaceSemanticHub`（先找到角色的 `HoFaceSemanticConnector`；名字按名字走，**没有表**）（2 个输出口：`写入数` / `状态`） |
 | `Nodes/HoDebugLogNode.cs` | Ho调试日志 | **正式（通用件，跟面捕无关）** | 一个入口 + 一块只读显示 + 一个「复制」按钮（`[Trigger]`，**没有任何输出口**） |
+| `Nodes/HoDictionaryMergeNode.cs` | Ho合并字典 | **正式（通用件，跟面捕无关）** | 两块「名字 → 浮点」表合并/覆盖 + **面板手填的覆盖行**（元组行）。官方没有"字典合并"节点（合并只给了骨骼旋转/权重两族），这个补空缺；典型用法是把控制器里恒 1 的门控 merge 成 0（2 个输出口：`字典` / `状态`） |
 
 **📖→✅ 2026-09-25 的拆分**：原来的 `Nodes/HoFaceMiddlewareNode.cs`（「Ho Face 处理链」= 中间层 + 控制器合一）
 拆成了 `HoFaceParameterNode` + `HoFaceSolverNode`，**中间只隔一份字典**（`参数`）与一个判断（`有脸`）。
@@ -55,11 +56,44 @@
 接收器 `1f4b7c2e-9a3d-4e51-b8c7-2d6a0f9e4b73`、
 **参数处理 `a41d0c86-6f52-4b19-8d3a-5e2c71b904af`**、
 **控制求解 `7c3a91d6-4f2b-48e7-9a15-63d8f0b2c47e`（沿用旧「处理链」那个）**、
-调试日志 `e2a47f83-5d19-4c6b-a07e-91b3c58d4f26`。分类都是 `Ho Face Tracking`。
+写动态参数 `c47b1e05-8a92-4f6d-b3c1-7e5a9d20f68b`、
+调试日志 `e2a47f83-5d19-4c6b-a07e-91b3c58d4f26`、
+**合并字典 `3f0c7d51-6a24-4f8b-9c02-8e1d5b7a64c3`**。
+分类：面捕那 5 个都是 `Ho Face Tracking`，**合并字典是 `Ho General`**（它跟面捕无关，只是暂时放在这个 mod 里）。
 
 ⚠️ **Id 的这段安排是有意的**：老「处理链」的 Id 给了**控制求解** —— 于是升级之后，
 指官方三个应用节点的那 **5 根线原样保住**；参数处理是新 Id，需要重接的只有接收器过来那几根
 （< 5 根）。另外：Id 或口名一变，老连线就是孤儿线（见 HoUnityTools `docs/pitfalls/WARUDO_INSPECTION.md` §7）。
+
+**合并/覆盖节点端口**（`Nodes/HoDictionaryMergeNode.cs`，2026-09-26 加）
+
+| 端口 | 说明 |
+|---|---|
+| `基础`(10)（`Dictionary<string,float>`） | 底表，先铺它（典型接法：参数处理节点的「参数」） |
+| `覆盖字典`(20)（同类型） | **接过来的**覆盖表（可选）；用于把另一份表（例如另一个合并节点的输出）并进来 |
+| `覆盖行`(30)（`HoParameterOverride[]`） | **面板上手填的覆盖行**（名字 + 值，加/删行，不用接线）。真正的"手填入口"就是这个 |
+| `只补缺失`(40)（bool） | 开着：只补表里没有的键；关着（默认）：覆盖里的键一律盖掉已有的 |
+| `字典`(输出) | 合并结果。**内部复用同一个实例**（跟官方 `OffsetBlendShapeNode.lastBlendShapes` 同做法） |
+| `状态`(输出) | 三个来源各几个键/行 · 结果几个键 · 新增/覆盖/跳过 · 空名字的行 |
+
+合并顺序：`基础` → `覆盖字典` → `覆盖行`（后面的盖前面的，手填的意图最硬）。**没有"删除键"这个动作**，也不需要：想关就写 0。
+
+⚠️ **语义：官方的同名类型 ≠ 同一件事。** 官方那一族 41 个 `Dictionary<string,float>` 口**全是 BlendShape 语义**
+（键 = 角色身上真实的形态键名，从 `Override Character BlendShapes` 到 `Smooth/Binarize/Trigger BlendShape`）；
+我们这个字典是**任意动画参数名**（控制器参数口）。**类型相同只说明"技术上插得上"** —— 别把我们的字典接到形态键
+节点上，也别把形态键字典接到控制求解上（float/bool/int 参数由写入那一步按控制器的声明类型强转）。
+
+⚠️ **为什么覆盖行必须是"元组行"而不是手填的字典**（2026-09-26 取证：官方场景 json 的 `typeKind` 统计 +
+两套程序集全量反射）：`Dictionary<string,float>` 落在 **Reference** 类，官方图里 **8 个字典口全是 null**
+（官方从不手填字典，字典一律是接过来的）。官方能"手填一组一组东西"的只有 `ValueArray`（`Single[]`/`String[]`）
+和 `StructuredData`/`StructuredDataArray`（**一行一个对象、字段是 `[DataInput]`、面板加/删行**）——
+后者就是官方的"元组"机制（`ContactSource : StructuredData<OnContactNode>`、`ParameterData`、`BlendShapeEntryData`）。
+全局 port 词汇表里**没有** `Tuple`/`KeyValuePair`，也没有第二种 `Dictionary<,>`。**元组 = StructuredData 行，官方没有第二种。**
+
+⚠️ **跨仓验证项**：`覆盖行` 用的是 mod 自己定义的 `StructuredData<>` 行类型。类型注册是懒加载的
+（`StructuredDataTypeRegistry.GetTypeMeta` 首次查询时注册，不需要全程序集扫描，见 Warudo.Core.dll 的 IL），
+所以理论上跟官方行类型走同一条路；但"**mod 节点面板能不能正常渲染 / 增删这种行**"**只能在 Warudo 里验证**
+（Unity 侧测不到）。验之前用 `覆盖字典` 那条入口不受影响。
 
 **接收器节点端口**（`HoFaceReceiverStatusNode.cs`）
 
@@ -547,7 +581,7 @@
 | `Nodes/HoFaceValueNode.cs`（Ho Face 原始值（按线名）） | 接收器节点的「原始值」口给的信息更多，这个只是中间产物 |
 | `Nodes/HoFaceCharacterProbeNode.cs`（Ho Face 角色探针） | 摸底完成，结论已经落进路线图 §3–§5；**它的观察窗也一起没了**（§3.2 有两条判据因此要另找工具） |
 
-同步收缩了 `NodeTypes`（现在 **5 个**，`HoFaceTrackingPlugin.cs` 的 `NodeTypes`）：漏列的节点即使编译进程序集
+同步收缩了 `NodeTypes`（当时 **5 个** —— 2026-09-26 加了通用的「Ho合并字典」之后是 **6 个**，`HoFaceTrackingPlugin.cs` 的 `NodeTypes`）：漏列的节点即使编译进程序集
 也不会出现在节点面板里（`:17-18`）。⚠️ 加节点之后**必须**在这儿补一行，否则节点在面板上根本不出现 ——
 这一条与"节点整个消失"那个坑（`AutoComplete` 签名不合规 ⇒ 整条 `NodeType` 注册失败）是两回事，别混。
 
