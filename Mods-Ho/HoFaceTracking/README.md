@@ -25,7 +25,7 @@
 |---|---|
 | `[PluginType] Id` | `hollow.hofacetracking`（也是沙箱目录名） |
 | Name / Version | `Ho Face Tracking` / `0.2.0` |
-| NodeTypes | 6 个（见下表） |
+| NodeTypes | **10 个**（见 §1.1；**漏列的节点不会出现在面板里**） |
 | 命名空间 | `HoFaceTracking.PluginMod`（**不要**叫 `...Plugin`：会遮蔽 `Plugin` 基类，CS0118，见 `HoFaceTrackingPlugin.cs:20-21`） |
 
 ### 1.1 节点（10 个，一个 Mod 全包了）
@@ -68,7 +68,7 @@
 **HoStringFloat `39edc904-0493-4dd3-9d73-521aa66e0e50`**、
 **HoStringFloatAppend `2ba50601-566f-490e-934a-664165e1777f`**、
 **HoBool2Float `25c639c7-6b33-4e90-bb6a-4aa811613aba`**。
-分类：**7 个节点全在 `Ho Face Tracking` 一个分类下**（2026-09-27 用户定：两个通用件也归到这一堆里，不再单开 `Ho General`）。
+分类：**10 个节点全在 `Ho Face Tracking` 一个分类下**（2026-09-27 用户定：通用件也归到这一堆里，不再单开 `Ho General`）。
 
 ⚠️ **Id 的这段安排是有意的**：老「处理链」的 Id 给了**控制求解** —— 于是升级之后，
 指官方三个应用节点的那 **5 根线原样保住**；参数处理是新 Id，需要重接的只有接收器过来那几根
@@ -584,6 +584,9 @@ Hub 与下游都拿不到真值 —— 要"两个开关的与"请在**中间层*
 
 ## 2. 目标形态（**2 个 mod / 我们的 3 + 官方 3 = 6 个节点**）
 
+⚠️ 这一节是**目标**（拆成两个 mod 还没做，见 §6）。**今天还是 1 个 mod / 10 个节点** ——
+多出来的 5 个是 §1.1 那族"名字 → 浮点"的通用件，它们不在这张图里（按需插在两层之间）。
+
 ```
 [HoVtsTrack mod]                       [HoVtsTrackController mod]                [官方节点 ×3]
   HoVts 接收器   ──原始值/新鲜/状态──▶  HoFace参数处理 ──参数/有脸──▶ HoFace控制求解 ──▶ 设置角色面部追踪 BlendShape 列表
@@ -897,7 +900,7 @@ Warudo 的**纯按钮**就是 `[Trigger(order)]` —— 官方节点一大堆（
 1. ~~清掉三个临时节点 + 收缩 `NodeTypes`~~ —— **2026-09-25 已做**（§1.1 / §3.1）。
 2. `.controller` 随 mod 打包与 `Load<RuntimeAnimatorController>` 取回：实测（§3.2；探针已删，
    要验得先加一个临时观察窗）。
-3. 这几个节点的实际连线：接收器 → 参数处理 →（可选：合并字典）→ 控制求解 → 官方三个应用节点，
+3. 这几个节点的实际连线：接收器 → 参数处理 →（可选：`HoStringFloatMerge` / `HoStringFloatDict`）→ 控制求解 → 官方三个应用节点，
    外加 `参数处理.参数 → 写动态参数 → 角色 Hub`，在 Warudo 里跑通（§3.2）；
    顺手验 VTS 服务端模式（VB 的客户端列表里认不认我们）。
 4. 之后才是拆成 `HoVtsTrack` / `HoVtsTrackController` 两个 Mod 与"中间层配置 + 控制器"那套内部实现。
