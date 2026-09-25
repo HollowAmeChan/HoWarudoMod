@@ -52,6 +52,7 @@ namespace HoFaceTracking.Core
         private string _bundlePath;
         private GameObject _rig;
         private Animator _animator;
+        private RuntimeAnimatorController _controller;   // 载入进来的那个（自检要报它的层结构）
         private readonly List<SkinnedMeshRenderer> _meshes = new List<SkinnedMeshRenderer>();
         private readonly List<string> _shapeNames = new List<string>();
         private readonly Dictionary<string, float> _shapes = new Dictionary<string, float>(StringComparer.Ordinal);
@@ -93,6 +94,12 @@ namespace HoFaceTracking.Core
 
         /// <summary>采样那次日志写过了没有（见 `Solve` 的第 ⑤ 步）。</summary>
         private bool _loggedSample;
+
+        /// <summary>②b 对照实验：额外推几帧时间（0 = 关掉实验）。</summary>
+        private const int NudgeFrames = 5;
+
+        /// <summary>②b 对照实验走到第几步了。</summary>
+        private int _nudgeStep;
 
         private readonly string[] _matchedNames = new string[ReportLimit];
         private readonly float[] _matchedValues = new float[ReportLimit];
@@ -165,6 +172,8 @@ namespace HoFaceTracking.Core
                 Status = "bundle 里没有 RuntimeAnimatorController";
                 return false;
             }
+
+            _controller = controller;
 
             // ③ 找 rig（控制器原配的那套层级；运行时枚举不了 clip 绑定，所以必须用户给）
             GameObject prefab = null;
@@ -253,12 +262,33 @@ namespace HoFaceTracking.Core
                     .Append(after > 36.9f && after < 37.1f ? " 可写✓" : " 写不进去✗");
             }
 
-            // 状态机在不在跑（全路径哈希）
+            // 状态机在不在跑（全路径哈希）+ **打进来的控制器到底是几层**。
+            // 层数/层名是"bundle 真是我这一版造的吗"的直接证据：单层树那版只有 1 层，
+            // 第一版"每层一个参数"是 2 层（层名 = 参数名）。光看形状数看不出来。
             if (_animator != null)
             {
                 AnimatorStateInfo info = _animator.GetCurrentAnimatorStateInfo(0);
                 builder.Append("  ·  state=").Append(info.fullPathHash)
                     .Append(" t=").Append(info.normalizedTime.ToString("F2"));
+            }
+
+            // 打进来的控制器里有哪些 clip。
+            // ⚠️ **`AnimationClip` 的绑定在运行期枚举不了**（`AnimationUtility` 是编辑器专属），
+            // 所以这里只能报"有几个 clip、叫什么、多长"—— 但它正好能回答
+            // "bundle 真是我这一版造的吗"：第一版是多条 `jawOpen_0/100`（两层），
+            // 现在这一版是四条 `corner_00/10/01/11`（单层一条 2D 树）。
+            // ⚠️ 别想着拿 `AnimatorController.layers` 读层结构：那个类型**运行期不存在**
+            // （2026-09-25 实测：`UnityEngine.AnimationModule` 里只有 `AnimatorControllerParameter`
+            // / `AnimatorControllerParameterType` / `AnimatorOverrideController` / `RuntimeAnimatorController`
+            // / `Animations.AnimatorControllerPlayable`，`AnimatorController` 是编辑器侧的东西）。
+            // 本地 `compile-check.ps1` 就是在这儿报的 `CS0234: 命名空间 UnityEngine 中不存在 AnimatorControllers`。
+            if (_controller != null)
+            {
+                var clips = _controller.animationClips;
+                int count = clips != null ? clips.Length : 0;
+                builder.Append("  ·  clip ").Append(count);
+                for (int i = 0; i < count && i < 5; i++)
+                    builder.Append(" [").Append(clips[i] != null ? clips[i].name : "?").Append(']');
             }
 
             return builder.ToString();
@@ -351,6 +381,17 @@ namespace HoFaceTracking.Core
             // ② 求值（时间步 0：我们要的是"当前参数下的姿势"，不是推进动画）
             _animator.Update(0f);
 
+            // ②b **一次性对照实验**：`Update(0f)` 不推进时间，只求值。如果某条混合树/某个属性
+            //     在"时间没动"时不被采样，表现就正好是"参数写进去了、形状恒 0"。
+            //     所以头几帧额外推一点点时间，把每一步采到的权重写进日志 —— 形状会不会因为
+            //     "时间动了"而出现，一次就看清（`NudgeFrames` 之后不再推，恢复原行为）。
+            bool nudging = false;
+            if (_nudgeStep < NudgeFrames && matched > 0)
+            {
+                nudging = true;
+                _nudgeStep++;
+            }
+
             // ③ 采融合形状（Unity 是 0..100 → 我们 0..1）
             BlendShapes.Clear();
             for (int m = 0; m < _meshes.Count; m++)
@@ -372,6 +413,12 @@ namespace HoFaceTracking.Core
             }
             _restCaptured = true;
 
+            if (nudging)
+            {
+                LogNudgeStep();
+                return;                      // 这一帧先不推时间，下一帧从同样的参数再采一次
+            }
+
             // ⑤ 采样结果写一次日志（**只写一次**，只在"有输入"时）。
             // 为什么要有它：`状态`/`BlendShapes` 两个口都得接线才看得见，而"控制器到底动没动"
             // 是每次联调的第一个问题。写一次就够了 —— 它报的是"某一帧采到什么"，不是每帧变化。
@@ -391,6 +438,25 @@ namespace HoFaceTracking.Core
             }
         }
 
+        /// <summary>`Update(0f)` / `Update(1/60)` / … 每一步采到多少 —— 见 `Solve` 的 ②b。</summary>
+        private void LogNudgeStep()
+        {
+            var line = new StringBuilder();
+            line.Append("[Ho 面捕] 采样对照 step ").Append(_nudgeStep).Append('/').Append(NudgeFrames)
+                .Append(" 写入 ").Append(MatchedText).Append("  →  ");
+            bool first = true;
+            foreach (var pair in BlendShapes)
+            {
+                if (!first) line.Append(" / ");
+                line.Append(pair.Key).Append(' ').Append(pair.Value.ToString("F4"));
+                first = false;
+            }
+            Debug.Log(line.ToString());
+
+            // 推一点点时间，看下一帧采到的会不会变
+            _animator.Update(1f / 60f);
+        }
+
         /// <summary>释放：销毁影子、卸掉 bundle。</summary>
         public void Dispose()
         {
@@ -401,6 +467,7 @@ namespace HoFaceTracking.Core
                 _rig = null;
             }
             _animator = null;
+            _controller = null;
 
             if (_bundle != null)
             {
@@ -417,6 +484,7 @@ namespace HoFaceTracking.Core
             MatchedText = null;
             Report = null;
             _loggedSample = false;
+            _nudgeStep = 0;
             _restCaptured = false;
         }
 

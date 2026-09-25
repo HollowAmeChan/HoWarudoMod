@@ -184,13 +184,28 @@
 
 ```
 [Ho 面捕] 控制器 已载入：hoface-controller-test.bundle（参数 2 个，形状 2 个，网格 1 个）
-          · 自检 shapes[jawOpen,mouthSmileLeft] · roundtrip 0.0→37→37.0 可写✓ · state=-1355318274 t=0.00
-[Ho 面捕] 控制器采样 写入 jawOpen 0.123 / mouthSmileLeft 0.946  →  采到 jawOpen 0.0012 / mouthSmileLeft 0.0000
+          · 自检 shapes[jawOpen,mouthSmileLeft] · roundtrip 0.0→37→37.0 可写✓ · state=-1355318274 t=0.00 · clip 4 [corner_00][corner_10][corner_01][corner_11]
+[Ho 面捕] 采样对照 step 1/5 写入 jawOpen 0.118 / mouthSmileLeft 0.423  →  jawOpen 0.0000 / mouthSmileLeft 0.0000
+…
+[Ho 面捕] 控制器采样 写入 jawOpen 0.118 / mouthSmileLeft 0.423  →  采到 jawOpen 0.0000 / mouthSmileLeft 0.0000
 ```
 
-三处判据：`shapes[…]` 是网格上**真实存在**的形状名（第③条）；`roundtrip 可写✓` 是**绕开 Animator**
-直接"写 37 读回来"（验代理网格本身动不动，写完当场还原）；`采样` 那一行是**首次采到输入**时的写入值
-与采集值并排 —— 两个 `mouthSmileLeft` 一个 0.946 一个 0.0000，就是第②条实锤。
+判据：
+
+* `shapes[…]` = 网格上**真实存在**的形状名（原因③：没有这个形状名时 `GetBlendShapeWeight` 按名字取不到，
+  控制器写了 `blendShape.foo` 也不报错，那格永远 0）。
+* `roundtrip 可写✓` = **绕开 Animator** 的"写 37 → 立刻读回 → 还原"，验代理网格本身动不动。
+* `clip N [...]` = 打进来的控制器里有哪几条 clip —— **回答"bundle 真是我这一版造的吗"**：
+  第一版是两条 `jawOpen_0/100`（两层），现在这版是四条 `corner_00/10/01/11`（单层 2D 树）。
+  ⚠️ 只能报名字，**报不了绑定**：`AnimationClip` 的绑定运行期枚举不了（`AnimationUtility` 是编辑器专属），
+  而且 `AnimatorController.layers` 那个类型**运行期不存在**（2026-09-25 实测：`UnityEngine.AnimationModule` 里
+  只有 `AnimatorControllerParameter` / `…ParameterType` / `AnimatorOverrideController` / `RuntimeAnimatorController` /
+  `Animations.AnimatorControllerPlayable`）。本地编译时想写 `.layers` 会直接 `CS0234`。
+* `采样对照 step n/5` = **一次性对照实验**（`Solve` 的 ②b）：`Update(0f)` 不推进时间、只求值；
+  如果某个属性在"时间没动"时不被采样，表现就正好是"参数写进去了、形状恒 0"。
+  所以头 5 帧额外推 `1/60` 秒，把每一步采到的权重写出来 —— **权重会不会因为"时间动了"而出现，一次看清**。
+  实验跑完（5 帧）就恢复 `Update(0f)`。
+* 两个 `mouthSmileLeft` 一个 0.423 一个 0.0000 = 原因②实锤（参数到位、控制器没推到网格上）。
 
 **❓ 还没验证的（第一次真机跑就看这几条）**：
 
@@ -341,6 +356,18 @@
   `tools/Editor/HoDebugBundleBuilder.cs` 已改成**单层一条 2D 混合树**。
   ⚠️ **旧的 `hoface-controller-test.bundle` 不会自己变**：必须在 Unity 里重按一次菜单重造，
   再在节点上按 `重读控制器`（`HoFaceController.Prepare` 对同一路径是直接返回的，认不出文件被换过）。
+* 2026-09-25 第二轮现场（用户重打后仍然 0）：`状态`/日志给出
+  `写入 jawOpen 0.118 / mouthSmileLeft 0.423`（**参数确实写进 Animator 了**）、
+  `roundtrip … 可写✓`（**网格本身能写**）、`shapes[jawOpen,mouthSmileLeft]`（**名字都在**），
+  但采到仍是 0 —— 三条原因全排掉，剩下的缝就在"Animator 求值 → 写网格"之间。
+  于是加了两条更细的观测（这一轮）：
+  **②b 对照实验**（`Update(0f)` vs `Update(1/60)` 各采一遍）与 **`clip N [...]`**（bundle 里是哪几条 clip）。
+  ⚠️ 顺带纠正我自己一条错写法：想报"控制器几层"时写了 `AnimatorController.layers`，
+  那个类型**运行期不存在**（只有 `RuntimeAnimatorController`，它只公开 `animationClips`）——
+  本地 `compile-check.ps1` 立刻 `CS0234` 拦下。
+* ❓ **仍未定论**：`Update(0f)` 在有状态机时到底会不会把混合树的解算结果落到 `SkinnedMeshRenderer` 上。
+  已知的间接证据是**负面**的：`jawOpen = 0.0653` 那次是**参数层**的 dump，不是采集回来的；
+  采集回来的 `jawOpen` 一直 ≤ `0.004`（且参数层同期常常是 0.000~0.05，所以那次也说明不了什么）。
 
 ---
 
