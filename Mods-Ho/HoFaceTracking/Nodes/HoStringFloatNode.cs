@@ -59,7 +59,7 @@ namespace HoFaceTracking.Nodes
     [NodeType(
         Id = "3e9abc40-8c60-4238-880a-c4a4febee63a",
         Title = "HoStringFloat",
-        Category = "Ho General")]
+        Category = "Ho Face Tracking")]
     public class HoStringFloatNode : Node
     {
         // ── 输入 ────────────────────────────────────────────────────────────────
