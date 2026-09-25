@@ -142,7 +142,7 @@ namespace HoFaceTracking.Core
                 if (string.IsNullOrEmpty(entry.key)) continue;
                 if (!seen.Add(entry.key))
                     Debug.LogError("[Ho 面捕] 动态参数资产「" + name + "」有重名 key：" + entry.key
-                        + "（第 " + i + " 项）。重名会让\"名字 → 下标\"指向错的那个槽。", this);
+                        + "（第 " + i + " 项）。重名会让「名字 → 下标」指向错的那个槽。", this);
                 if (entry.max < entry.min)
                     Debug.LogWarning("[Ho 面捕] 动态参数资产「" + name + "」的 " + entry.key + " 上下限反了（min > max）。", this);
             }
