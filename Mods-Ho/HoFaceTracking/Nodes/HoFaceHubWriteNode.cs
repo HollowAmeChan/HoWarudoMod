@@ -74,6 +74,9 @@ namespace HoFaceTracking.Nodes
         /// <summary>那几个下标的前几个（只报几个，够定位就行）。</summary>
         private readonly List<int> outsideSamples = new List<int>();
 
+        /// <summary>被跳过的键的前几个（**名字对不上时这是唯一的线索**）。</summary>
+        private readonly List<string> skippedSamples = new List<string>();
+
         private string loggedState;
 
         // ── 按钮 ────────────────────────────────────────────────────────────────
@@ -145,6 +148,15 @@ namespace HoFaceTracking.Nodes
                     + Join(outsideSamples) + "…）⇒ 控制器和槽表没对齐，那几个语义现在没人认领。";
             }
 
+            if (skippedLastFrame > 0 && skippedSamples.Count > 0)
+            {
+                // 最常见的一种错：控制器里"语义写手"填的名字与角色槽表里的名字差一个字符。
+                // 那种错**完全不报错**，只表现为"某个语义永远不动" —— 所以这里点名。
+                text += "\n⚠ 跳过的键里有：" + Join(skippedSamples)
+                    + (skippedLastFrame > skippedSamples.Count ? "…" : "")
+                    + " ⇒ 名字既不在槽表里、又不像 `#下标`（多半是两边名字对不上）。";
+            }
+
             if (hub.SlotCount == 0)
                 text += "\n⚠ Hub 的 values 是空的（0 个槽）⇒ 什么都写不进去。";
 
@@ -196,14 +208,23 @@ namespace HoFaceTracking.Nodes
             skippedLastFrame = 0;
             outsideLastFrame = 0;
             outsideSamples.Clear();
+            skippedSamples.Clear();
 
             if (hub == null || Values == null || Values.Count == 0) { writtenLastFrame = 0; return 0; }
+
+            // 角色这边的 Hub 按槽表开够槽（只增不减）—— 控制器那边是它自己开槽的，两边互不知情。
+            hub.Reserve(connector.Count);
 
             int written = 0;
             foreach (var pair in Values)
             {
                 int index = Resolve(pair.Key);
-                if (index < 0) { skippedLastFrame++; continue; }
+                if (index < 0)
+                {
+                    skippedLastFrame++;
+                    if (skippedSamples.Count < 4 && !string.IsNullOrEmpty(pair.Key)) skippedSamples.Add(pair.Key);
+                    continue;
+                }
 
                 hub.SetFloat(index, pair.Value);
                 written++;
@@ -242,7 +263,7 @@ namespace HoFaceTracking.Nodes
             return byName >= 0 && byName < hub.SlotCount ? byName : -1;
         }
 
-        /// <summary>把几个下标拼成 `1、3、7`（空表时返回 `—`）。</summary>
+        /// <summary>把几个下标拼成 `1、3、7`。</summary>
         private string Join(List<int> indices)
         {
             if (indices == null || indices.Count == 0) return "—";
@@ -251,6 +272,19 @@ namespace HoFaceTracking.Nodes
             {
                 if (i > 0) text.Append('、');
                 text.Append(indices[i]);
+            }
+            return text.ToString();
+        }
+
+        /// <summary>把几个键拼成 `MouthX、MouthY`。</summary>
+        private string Join(List<string> names)
+        {
+            if (names == null || names.Count == 0) return "—";
+            var text = new System.Text.StringBuilder();
+            for (int i = 0; i < names.Count; i++)
+            {
+                if (i > 0) text.Append('、');
+                text.Append(names[i]);
             }
             return text.ToString();
         }
