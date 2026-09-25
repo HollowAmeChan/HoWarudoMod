@@ -125,6 +125,27 @@ namespace HoFaceTracking.Core
         /// <summary>采集到的融合形状字典（键 = 代理网格上的形状名）。</summary>
         public readonly Dictionary<string, float> BlendShapes = new Dictionary<string, float>(StringComparer.Ordinal);
 
+        /// <summary>
+        /// **语义槽**（动态参数）：控制器写进影子上的 `HoFaceSemanticHub` 的那些值。
+        /// 键 = 语义名（代理上的 Hub **没填资产**时会退化成"下标字符串" `#0` / `#1`…）。
+        ///
+        /// 【为什么它跟形状/骨骼一类】
+        /// 三者都是"控制器在影子上算出来的输出"：形状靠网格绑定、骨骼靠 `HumanBodyBones` 枚举、
+        /// 语义槽靠 Hub 的**下标**（不反射、不按字段名）—— 区别只在采集机制，不在性质。
+        ///
+        /// 【谁写进影子上的 Hub】
+        /// **控制器的动画曲线**（`path = 空 或 Hub 所在层级`、`type = HoFaceSemanticHub`、
+        /// `propertyName = "values.<i>"`）。所以我们这里只**读**，不写。
+        /// 影子上的那份 Hub 不需要资产 —— 没有资产时它就是"只有值、没有名字"的代理形态。
+        /// </summary>
+        public readonly Dictionary<string, float> HubValues = new Dictionary<string, float>(StringComparer.Ordinal);
+
+        /// <summary>影子上的 Hub（没有就是 null）。有它才说明"控制器能写动态参数"这条路是通的。</summary>
+        private HoFaceSemanticHub _hub;
+
+        /// <summary>影子上的 Hub 有几个槽。0 = 这个 bundle 没带 Hub（或者 Hub 还没挂上去）。</summary>
+        public int HubSlotCount { get { return _hub != null && _hub.values != null ? _hub.values.Length : 0; } }
+
         /// <summary>采集到的骨骼旋转偏移（按 `HumanBodyBones` 索引；没采到就是 identity）。</summary>
         public Quaternion[] BoneRotations;
 
@@ -255,9 +276,13 @@ namespace HoFaceTracking.Core
                 for (int i = 0; i < mesh.blendShapeCount; i++) _shapeNames.Add(mesh.GetBlendShapeName(i));
             }
 
+            // ⑦ 找影子上的**语义 Hub**（动态参数）。找不到不是错误：说明这份 bundle 的 rig 上没挂 Hub，
+            //    那这条链就只有形状与骨骼 —— 状态里会点名，不静默。
+            _hub = _rig.GetComponentInChildren<HoFaceSemanticHub>(true);
+
             _restCaptured = false;
             Status = "已载入：" + name + "（参数 " + ParameterCount + " 个，形状 "
-                + _shapeNames.Count + " 个，网格 " + _meshes.Count + " 个）";
+                + _shapeNames.Count + " 个，网格 " + _meshes.Count + " 个，语义槽 " + HubSlotCount + " 个）";
             Report = BuildReport();
 
             // 同一句话也写进 Player.log：`状态` 口要接线才看得到，日志不用。
@@ -329,6 +354,29 @@ namespace HoFaceTracking.Core
                 builder.Append("  ·  clip ").Append(count);
                 for (int i = 0; i < count && i < 5; i++)
                     builder.Append(" [").Append(clips[i] != null ? clips[i].name : "?").Append(']');
+            }
+
+            // 语义 Hub：**bundle 里到底有没有它**，以及它会不会动。
+            // 这一段是"控制器能不能写动态参数"唯一的可见证据 —— 没有它就只能看 `HubValues` 恒空而不知道为什么。
+            builder.Append("  ·  hub ");
+            if (_hub == null)
+            {
+                builder.Append("没找到（这份 bundle 的 rig 上没挂 HoFaceSemanticHub）");
+            }
+            else if (_hub.values == null || _hub.values.Length == 0)
+            {
+                builder.Append("挂了，但 values 是空的（资产没填，或者长度是 0）");
+            }
+            else
+            {
+                // 往返：绕开 Animator，验这个槽能不能被读回来（跟网格那条同一个思路）。
+                float before = _hub.values[0];
+                _hub.values[0] = 0.375f;
+                float after = _hub.values[0];
+                _hub.values[0] = before;
+                builder.Append(_hub.values.Length).Append(" 槽 · roundtrip ")
+                    .Append(before.ToString("F3")).Append("→0.375→").Append(after.ToString("F3"))
+                    .Append(after > 0.374f && after < 0.376f ? " 可读写✓" : " 读写不通✗");
             }
 
             return builder.ToString();
@@ -513,6 +561,20 @@ namespace HoFaceTracking.Core
             }
             _restCaptured = true;
 
+            // ⑤ 采**语义槽**（动态参数）：控制器曲线写进影子上的 `HoFaceSemanticHub`，我们只读。
+            //    ⚠️ 按**下标**读，不按字段名（UMod 禁反射）。名字只有 Hub 填了资产时才有 ——
+            //    影子上的那份通常没资产，所以就报下标（`#0`/`#1`），名字由节点侧那张资产去解释。
+            HubValues.Clear();
+            if (_hub != null && _hub.values != null)
+            {
+                for (int i = 0; i < _hub.values.Length; i++)
+                {
+                    string key = _hub.KeyAt(i);
+                    if (string.IsNullOrEmpty(key)) key = "#" + i;
+                    HubValues[key] = _hub.values[i];
+                }
+            }
+
             // ⑤ 采样结果写一次日志（**只写一次**，只在"有输入"时）。
             // 为什么要有它：`状态`/`BlendShapes` 两个口都得接线才看得见，而"控制器到底动没动"
             // 是每次联调的第一个问题。写一次就够了 —— 它报的是"某一帧采到什么"，不是每帧变化。
@@ -547,6 +609,7 @@ namespace HoFaceTracking.Core
             }
             _animator = null;
             _controller = null;
+            _hub = null;
 
             if (_bundle != null)
             {
@@ -558,6 +621,7 @@ namespace HoFaceTracking.Core
             _meshes.Clear();
             _shapeNames.Clear();
             BlendShapes.Clear();
+            HubValues.Clear();
             ParameterCount = 0;
             MatchedParameters = 0;
             MatchedText = null;

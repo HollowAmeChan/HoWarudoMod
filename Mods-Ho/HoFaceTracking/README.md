@@ -25,16 +25,17 @@
 |---|---|
 | `[PluginType] Id` | `hollow.hofacetracking`（也是沙箱目录名） |
 | Name / Version | `Ho Face Tracking` / `0.2.0` |
-| NodeTypes | 3 个（见下表） |
+| NodeTypes | 5 个（见下表） |
 | 命名空间 | `HoFaceTracking.PluginMod`（**不要**叫 `...Plugin`：会遮蔽 `Plugin` 基类，CS0118，见 `HoFaceTrackingPlugin.cs:20-21`） |
 
-### 1.1 节点（4 个，一个 Mod 全包了）
+### 1.1 节点（5 个，一个 Mod 全包了）
 
 | 节点（代码） | 面板标题 | 状态 | 干什么 |
 |---|---|---|---|
 | `Nodes/HoFaceReceiverStatusNode.cs` | HoFaceVTS接收器 | **正式** | 收来源的数据：手机（UDP 直连）或**本机的 VB**（VTS 服务端模式）；Connect / Disconnect + `原始值`（字典）+ `新鲜` + 一行 `状态`（**3 个输出口：`状态` 排在最下面**） |
 | `Nodes/HoFaceParameterNode.cs` | HoFace参数处理 | **正式** | 读 `*.hoface.json`：裸线名 → 规范参数（+ `有脸` 判定）。**只交一份字典**，不装配（**3 个输出口**） |
-| `Nodes/HoFaceSolverNode.cs` | HoFace控制求解 | **正式** | **从参数反求动画输出**（零配置）：官方同形的 5 个口 + 一个 `状态`（**6 个输出口**） |
+| `Nodes/HoFaceSolverNode.cs` | HoFace控制求解 | **正式** | **从参数反求动画输出**（零配置）：官方同形的 5 个口 + `动态参数` + 一个 `状态`（**7 个输出口**） |
+| `Nodes/HoFaceHubWriteNode.cs` | HoFace写动态参数 | **正式** | 把 `动态参数` 出口写进**角色身上**的 `HoFaceSemanticHub`（2 个输出口：`写入数` / `状态`） |
 | `Nodes/HoDebugLogNode.cs` | Ho调试日志 | **正式（通用件，跟面捕无关）** | 一个入口 + 一块只读显示 + 一个「复制」按钮（`[Trigger]`，**没有任何输出口**） |
 
 **📖→✅ 2026-09-25 的拆分**：原来的 `Nodes/HoFaceMiddlewareNode.cs`（「Ho Face 处理链」= 中间层 + 控制器合一）
@@ -138,10 +139,14 @@
 * 按钮：`重读控制器`（`[Trigger(200)]`，**同名文件被替换时用** —— `Prepare` 认不出内容变了）。
 * 输出（**与官方取数节点同形的 5 个**）：`Is Tracked`（= `有脸` **且** 控制器可用）/ `BlendShapes`
   （字典，列表语义）/ `Head Position` / `Root Position` / `Bone Rotations`（数组，列表语义）
-* 输出（诊断，就这一个）：`状态` —— 多行：`参数 N 个键 · 形状 N 个 · 有脸=是/否 · 头姿 (x, y, z)°`，
-  下面固定一行 `控制器：…`（载入结果 / 失败在哪一步 / 对上几个参数），控制器就绪时再加 `写入 …` 与 `自检 …`。
+* 输出（**新的一条链**）：`动态参数`（字典）—— 控制器写进**影子 Hub** 的语义槽，我们按下标采出来。
+  交给「HoFace写动态参数」写进**角色身上**的 Hub。⚠️ 它跟形状/骨骼**是独立的**：
+  影子 `rig` 上没挂 `HoFaceSemanticHub` 时这个口恒空，但形状照常动（`状态` 里会点名）。
+* 输出（诊断，就这一个）：`状态` —— 多行：`参数 N 个键 · 形状 N 个 · 动态参数 N 个 · 有脸=是/否 · 头姿 (x, y, z)°`，
+  下面固定一行 `控制器：…`（载入结果 / 失败在哪一步 / 对上几个参数）、一行 `动态参数：…`
+  （影子 Hub 有几个槽 / 有没有它），控制器就绪时再加 `写入 …` 与 `自检 …`。
 * ⚠️ **没有控制器就不吐任何输出**（2026-09-25 用户定，见 §1.1.3）：`控制器` 留空、或载入失败时，
-  5 个口**全中性**（`BlendShapes` 空字典 / 位置零 / 骨骼 identity / `Is Tracked` 假），
+  所有口**全中性**（`BlendShapes` 空字典 / 位置零 / 骨骼 identity / `动态参数` 空 / `Is Tracked` 假），
   `状态` 里那句 `⚠ 没有可用的控制器…` 就是"为什么不吐"的说明书。
   **不用旧值兜底、也没有"把参数原样端出去"的退路** —— 那条退路不报错，画面看着像在工作，最难查。
 * ⚠️ **缺键 = 中性**：控制器里没写到的那些形状键，采回来就是默认值（0）。
@@ -512,8 +517,9 @@
 | `Nodes/HoFaceValueNode.cs`（Ho Face 原始值（按线名）） | 接收器节点的「原始值」口给的信息更多，这个只是中间产物 |
 | `Nodes/HoFaceCharacterProbeNode.cs`（Ho Face 角色探针） | 摸底完成，结论已经落进路线图 §3–§5；**它的观察窗也一起没了**（§3.2 有两条判据因此要另找工具） |
 
-同步收缩了 `NodeTypes`（现在 3 个，`HoFaceTrackingPlugin.cs:38-43`）：漏列的节点即使编译进程序集
-也不会出现在节点面板里（`:17-18`）。
+同步收缩了 `NodeTypes`（现在 **5 个**，`HoFaceTrackingPlugin.cs` 的 `NodeTypes`）：漏列的节点即使编译进程序集
+也不会出现在节点面板里（`:17-18`）。⚠️ 加节点之后**必须**在这儿补一行，否则节点在面板上根本不出现 ——
+这一条与"节点整个消失"那个坑（`AutoComplete` 签名不合规 ⇒ 整条 `NodeType` 注册失败）是两回事，别混。
 
 `HoFaceDebugNode` 没删，但**重写成了一个通用件 `HoDebugLogNode`（面板名「Ho调试日志」）**
 （`Nodes/HoDebugLogNode.cs`，2026-09-25 定案）。它跟面捕无关，谁都能用 —— 一个入口、一块只读显示、一个复制按钮：
@@ -632,8 +638,7 @@ Warudo 的**纯按钮**就是 `[Trigger(order)]` —— 官方节点一大堆（
 * ✅ **这几个节点的实际连线效果已实测跑通一半**（2026-09-25，安卓 VTS + `ho-debug-android.hoface.json`）：
   接收器 → 参数处理 → 控制求解 **全都在动**（52 个形态键、`Head Position` 有真值），
   **控制器模式也实测成立**（bundle 载入 ✓ 参数对上 2 个 ✓ 形状采到 ✓）。
-  **仍未测**：① 控制求解那 5 个输出口接**官方三个应用节点**（路线图 §7 待办 #4）；② **VTS 服务端模式**（本机 VB 连我们）；
-  ③ 控制器的**骨骼**那条路（`GetBoneTransform` 需要 Humanoid Avatar，测试 bundle 里没有 ⇒ 骨骼全是 identity）。
+  **仍未测**：① 控制求解那 5 个输出口接**官方三个应用节点**（路线图 §7 待办 #4）；② **VTS 服务端模式**（本机 VB 连我们）；  ③ 控制器的**骨骼**那条路（`GetBoneTransform` 需要 Humanoid Avatar，测试 bundle 里没有 ⇒ 骨骼全是 identity）。
 * **「覆盖角色根位置」的权重语义**（值是绝对还是增量）：路线图 §2.2 是**推断**，
   那一节写了实测判据（权重填 1 + 值填原点，看带位移的动画还动不动）。
 * 已经量出来的那三条（别再当未知）：骨骼数组长度 = `(int)HumanBodyBones.LastBone`、

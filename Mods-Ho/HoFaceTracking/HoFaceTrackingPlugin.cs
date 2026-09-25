@@ -45,6 +45,7 @@ namespace HoFaceTracking.PluginMod
             typeof(HoFaceReceiverStatusNode),
             typeof(HoFaceParameterNode),
             typeof(HoFaceSolverNode),
+            typeof(HoFaceHubWriteNode),
             typeof(HoDebugLogNode)
         })]
     public class HoFaceTrackingPlugin : Plugin
