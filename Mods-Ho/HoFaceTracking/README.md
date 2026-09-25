@@ -282,15 +282,41 @@
 
 * 它造什么：一个三角形网格 + 两个 blend shape（名字故意 = 规范参数名 `jawOpen` / `mouthSmileLeft`）、
   一个 rig 预制体（`Animator` + `SkinnedMeshRenderer`、`updateWhenOffscreen`）、
-  一个两层控制器（每层一条 1D 混合树：参数 0 → 权重 0，参数 1 → 权重 100），
+  一个**单层控制器**：一条 `FreeformDirectional2D` 混合树、四个角各一条 clip（每个 clip **同时**写两个形状），
   打成一个 `_hodebug/hoface-controller-test.bundle`（**ChunkBasedCompression**；`LoadFromFile` 读得了，别用默认 LZMA）。
+* ⚠️ **第一版是"两层、每层一条 1D 树"（一层一个参数），它是个坑，别改回去**：两层都是 `Override` +
+  状态默认 `WriteDefaultValues = 1`，两层同时往**同一批属性**上写（各自还把自己的默认值写回去），
+  谁赢取决于层的混合语义 —— 实测现象是 `mouthSmileLeft` 恒 0、`jawOpen` 也只有极小值，
+  而且完全分不清是"参数没写上"还是"第二层没生效"。单层一条树就没有这个歧义：所有绑定在**同一个 motion** 里。
 * 为什么必须在 **2021.3.45f2** 那个编辑器里打：AssetBundle 与 Unity 版本绑定，而 **Warudo 本体就是 2021.3.45f2**
   （读自 `Warudo_Data/globalgamemanagers`）；mod 工程也正好是它（`ProjectSettings/ProjectVersion.txt`）✓。
 * 期望结果（粘进「HoFace控制求解」的 `控制器（可选，AssetBundle 路径）` 后看 `状态`）：
   `已载入：hoface-controller-test.bundle（参数 2 个，形状 2 个，网格 1 个）`，
+  `对上参数 2 个`，并多一行 **`写入 jawOpen 0.123 / mouthSmileLeft 0.946`**（← 这一行是"参数真的写进去了"的证据），
   然后 `BlendShapes` 里出现 `jawOpen` / `mouthSmileLeft`，值随输入变（Unity 权重 0..100 → 我们 /100）。
+* ⚠️ `写入` 那行报的是**我们写给 Animator 的数**，它到位 ≠ 形状到位：形状那一侧只看 `BlendShapes`。
+  两行并排就能定性 —— 见 §1.6。
+
 * ⚠️ 它验不到**骨骼**那条路：`Animator.GetBoneTransform` 要 **Humanoid Avatar**，这个最小 rig 没有，
   所以 `Bone Rotations` 会全是 identity（我们代码里 null → identity）—— 要验骨骼得塞一个带 Avatar 的人形模型。
+
+### 1.6 现场：控制器里 `mouthSmileLeft = 0.000` 而参数层是 0.946（2026-09-25）
+
+用户报的是"一直笑，参数层明明有值，控制器那格恒 0 —— 是不是你没写映射"。**不是映射的问题**，链条如下：
+
+* 参数层（「HoFace参数处理」`参数` 口）**有值**：`Player.log` 里那份 `参数（输出行那份字典，按名字排序）`
+  逐帧写着 `mouthSmileLeft = 0.946`（实测那一份里 `mouthSmileLeft` 在 0.09~1.00 之间动）⇒
+  `ARKit/mouthSmileLeft → mouthSmileLeft` 的映射、以及它进 `Parameters` 字典都没问题
+  （`HoFaceChain.cs` 的 `OutputKey` + `HoFaceTrackingChannels.Names`）。
+* 控制器模式（`HoFaceSolverNode` 里 `controllerActive` 时）`BlendShapes` **只来自代理网格**（2 个键），
+  所以那一格恒 0 只有两种可能：**参数没写进 Animator**（名字对不上）或 **控制器没把那格推到网格上**。
+* 当时**看不出来是哪种** —— `状态` 只报了 `对上参数 2 个`（个数，不含值）。**这是观测缺口，不是代码 bug**。
+  ⇒ 现在 `状态` 多一行 `写入 jawOpen 0.123 / mouthSmileLeft 0.946`（`HoFaceController.MatchedText`）：
+  只要这行里 `mouthSmileLeft` 不是 0，就说明**输入到位了**，问题 100% 在控制器那一侧。
+* 控制器那一侧的嫌疑已经定位到**第一版 bundle 的两层结构**（`Override` + `WriteDefaultValues = 1` 互写），
+  `tools/Editor/HoDebugBundleBuilder.cs` 已改成**单层一条 2D 混合树**。
+  ⚠️ **旧的 `hoface-controller-test.bundle` 不会自己变**：必须在 Unity 里重按一次菜单重造，
+  再在节点上按 `重读控制器`（`HoFaceController.Prepare` 对同一路径是直接返回的，认不出文件被换过）。
 
 ---
 

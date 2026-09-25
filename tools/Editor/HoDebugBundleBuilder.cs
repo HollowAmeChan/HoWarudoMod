@@ -8,8 +8,10 @@
 //   · `HoDebugProxyMesh`：一个三角形 + 两个 blend shape（`jawOpen`、`mouthSmileLeft`）
 //     —— 名字**故意跟规范参数名一致**：控制器模式的参数是按名字对上的（对不上的数量会显示在节点状态里）
 //   · `HoDebugRig`（预制体）：上面挂 `Animator` + `SkinnedMeshRenderer`（`updateWhenOffscreen = true`）
-//   · `HoDebugController`：**两层**，每层一条 1D 混合树（参数 0 → 权重 0；参数 1 → 权重 100）
-//     ⚠️ 用两层是因为"一个状态机一次只播一个状态"，而两层是同时播的 —— 这样两个参数能各自驱动一个形状
+//   · `HoDebugController`：**一层**，一条 `FreeformDirectional2D` 混合树（X = `jawOpen`、Y = `mouthSmileLeft`），
+//     四个角各一条 clip、每个 clip **同时**写两个形状。这样"哪个形状该动"完全由参数定，没有层的歧义。
+//     ⚠️ 第一版是"两层、每层一条 1D 树"（一层一个参数）：两层都 `Override`、状态默认 `WriteDefaultValues = 1`，
+//        互相把对方的属性写回默认值 ⇒ 实测 `mouthSmileLeft` 恒 0、`jawOpen` 只剩极小值。别改回去。
 //   · 打成一个 bundle：`<工程根>/_hodebug/hoface-controller-test.bundle`
 //
 // 【怎么用】菜单 `HoWarudoModTests/造调试用控制器 bundle（AssetBundle）` → 把弹出来/日志里的路径
@@ -135,76 +137,84 @@ namespace Hollow.HoWarudoModTests.Editor
             return rig;
         }
 
-        /// <summary>造控制器：一层一个参数，每层一条 1D 混合树（0 → 权重 0，1 → 权重 100）。</summary>
+        /// <summary>
+        /// 造控制器：**一层 + 一条 2D 混合树**（四个角各一条 clip，每个 clip 同时写两个形状）。
+        ///
+        /// 为什么不用"一层一个参数"（第一版就是那么写的）：多层 + `Override` 混写时，
+        /// 到底哪个形状被哪一层"覆盖"取决于层的混合语义，出问题很难看出来
+        /// （实测现象：`jawOpen` 会动、`mouthSmileLeft` 恒为 0，但分不清是输入是 0 还是第二层没生效）。
+        /// 一条树 + 一个状态就没有这个问题：所有绑定都在**同一个 motion** 里，权重完全由参数决定。
+        /// </summary>
         private static AnimatorController BuildController()
         {
             string controllerPath = WorkFolder + "/HoDebugController.controller";
             AssetDatabase.DeleteAsset(controllerPath);
             var controller = AnimatorController.CreateAnimatorControllerAtPath(controllerPath);
 
-            // 模板自带一层 Base Layer：**复用它**做第一个参数（别把层删光 —— 一个控制器总得有一层）。
             for (int i = 0; i < Parameters.Length; i++)
+                controller.AddParameter(Parameters[i], AnimatorControllerParameterType.Float);
+
+            // 四个角：0 = 不动，100 = 该形状推到满（Unity 的 blend shape 权重是 0..100）
+            AnimationClip off = BuildCornerClip(0f, 0f, "corner_00");
+            AnimationClip jawOnly = BuildCornerClip(100f, 0f, "corner_10");
+            AnimationClip smileOnly = BuildCornerClip(0f, 100f, "corner_01");
+            AnimationClip both = BuildCornerClip(100f, 100f, "corner_11");
+
+            AnimatorControllerLayer layer = controller.layers[0];      // 用模板自带的 Base Layer
+            layer.name = "Drive";
+            layer.defaultWeight = 1f;
+            layer.blendingMode = AnimatorLayerBlendingMode.Override;
+
+            var stateMachine = layer.stateMachine;
+            AnimatorState state = stateMachine.AddState("Drive");
+            stateMachine.defaultState = state;
+
+            var tree = new BlendTree
             {
-                string parameter = Parameters[i];
-                controller.AddParameter(parameter, AnimatorControllerParameterType.Float);
+                name = "Drive 2D",
+                blendType = BlendTreeType.FreeformDirectional2D,
+                blendParameter = Parameters[0],
+                blendParameterY = Parameters[1],
+                useAutomaticThresholds = false
+            };
+            AssetDatabase.AddObjectToAsset(tree, controller);
 
-                AnimationClip low = BuildClip(parameter, 0f, parameter + "_0");
-                AnimationClip high = BuildClip(parameter, 100f, parameter + "_100");
-
-                AnimatorControllerLayer layer;
-                if (i == 0)
-                {
-                    layer = controller.layers[0];
-                }
-                else
-                {
-                    controller.AddLayer(parameter);
-                    layer = controller.layers[controller.layers.Length - 1];
-                }
-
-                layer.name = parameter;
-                layer.defaultWeight = 1f;
-                layer.blendingMode = AnimatorLayerBlendingMode.Override;
-
-                // 每层一个状态机、一个状态，状态里放混合树
-                var stateMachine = layer.stateMachine;
-                AnimatorState state = stateMachine.AddState("Drive " + parameter);
-                stateMachine.defaultState = state;
-
-                var tree = new BlendTree
-                {
-                    name = "Tree " + parameter,
-                    blendType = BlendTreeType.Simple1D,
-                    blendParameter = parameter,
-                    useAutomaticThresholds = false
-                };
-                AssetDatabase.AddObjectToAsset(tree, controller);
-
-                tree.AddChild(low, 0f);
-                tree.AddChild(high, 1f);
-                state.motion = tree;
-            }
+            // 位置就是"两个参数的值"这一坐标；SimpleDirectional2D 也能用，FreeformDirectional2D 更宽容
+            tree.AddChild(off, new Vector2(0f, 0f));
+            tree.AddChild(jawOnly, new Vector2(1f, 0f));
+            tree.AddChild(smileOnly, new Vector2(0f, 1f));
+            tree.AddChild(both, new Vector2(1f, 1f));
+            state.motion = tree;
 
             EditorUtility.SetDirty(controller);
             return controller;
         }
 
         /// <summary>
-        /// 造一条"恒定权重"的 clip：绑到 `SkinnedMeshRenderer.blendShape.<形状名>`。
+        /// 造一条"两个形状都写死常量"的 clip：绑到 `SkinnedMeshRenderer.blendShape.&lt;形状名&gt;`。
         /// path 用空串 = 就挂在 Animator 那个对象自己身上（我们的 rig 正是这样）。
+        ///
+        /// 曲线用 **两个相同的键**（`Linear(0, w, 1/30, w)`）而不是 `AnimationCurve.Constant`：
+        /// 两者算出来都是常量，但"一个键的曲线"在 Unity 里有个著名的坑 —— 采样点落在唯一那个键之外时，
+        /// 单键曲线会被求值成 **0**（多键曲线才按端点夹取）。状态机是拿自己的时间轴去采样的，
+        /// 我们控制不了它落在哪；两个键 + `m_PreInfinity/m_PostInfinity = 2`（夹取）就把它钉死了。
+        /// ⚠️ 这一条**没有实测对照**（没做过"单键 vs 双键"的 A/B），是防御性写法。
         /// </summary>
-        private static AnimationClip BuildClip(string shape, float weight, string clipName)
+        private static AnimationClip BuildCornerClip(float jawWeight, float smileWeight, string clipName)
         {
             var clip = new AnimationClip { name = clipName, frameRate = 30f };
-            var curve = AnimationCurve.Constant(0f, 1f / 30f, weight);
 
-            var binding = new EditorCurveBinding
+            for (int i = 0; i < Parameters.Length; i++)
             {
-                path = "",
-                type = typeof(SkinnedMeshRenderer),
-                propertyName = "blendShape." + shape
-            };
-            AnimationUtility.SetEditorCurve(clip, binding, curve);
+                float weight = i == 0 ? jawWeight : smileWeight;
+                var binding = new EditorCurveBinding
+                {
+                    path = "",
+                    type = typeof(SkinnedMeshRenderer),
+                    propertyName = "blendShape." + Parameters[i]
+                };
+                AnimationUtility.SetEditorCurve(clip, binding, AnimationCurve.Linear(0f, weight, 1f / 30f, weight));
+            }
 
             string path = WorkFolder + "/" + clipName + ".anim";
             AssetDatabase.CreateAsset(clip, path);

@@ -209,6 +209,11 @@ namespace HoFaceTracking.Nodes
                 text += "\n控制器：" + controller.Status
                     + (controllerActive ? "  ·  对上参数 " + controller.MatchedParameters + " 个" : "");
 
+            // 写进去的参数名 → 值。**这是"输入到位没有"的唯一证据**：
+            // 形状恒 0 时靠它把"参数没写上（名字对不上）"与"控制器没把那格推到网格上"分开。
+            if (controllerActive && !string.IsNullOrEmpty(controller.MatchedText))
+                text += "\n写入 " + controller.MatchedText;
+
             return text;
         }
 

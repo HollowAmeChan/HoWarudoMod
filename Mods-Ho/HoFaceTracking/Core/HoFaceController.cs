@@ -76,6 +76,24 @@ namespace HoFaceTracking.Core
         /// <summary>上一帧真写进去的参数个数（对不上的说明名字不匹配 —— 那是唯一线索）。</summary>
         public int MatchedParameters { get; private set; }
 
+        /// <summary>
+        /// 上一帧写进去的 **参数名 → 值**，摊成一行（最多 <see cref="ReportLimit"/> 个）。
+        ///
+        /// ⚠️ 这条是**必备证据**，不是装饰：控制器模式下 `BlendShapes` 来自代理网格，
+        /// 而网格上"有没有这个形状、权重采到多少"与"参数有没有写进去"是**两件独立的事**。
+        /// 只报个数（`对上参数 2 个`）时，"形状恒 0"分不清是哪一件 —— 2026-09-25 那次
+        /// `mouthSmileLeft` 恒 0 就是卡在这个盲区里（参数层明明 0.946）。
+        /// 值取的是**我们写给 Animator 的那个数**（`Animator.GetFloat` 读回来的是同一个），
+        /// 所以它说明的是"输入到位"，形状那一侧仍要看 `BlendShapes`。
+        /// </summary>
+        public string MatchedText { get; private set; }
+
+        /// <summary>`MatchedText` 里最多列几个参数（节点 `状态` 是给人看的，别摊开 200 个）。</summary>
+        private const int ReportLimit = 6;
+
+        private readonly string[] _matchedNames = new string[ReportLimit];
+        private readonly float[] _matchedValues = new float[ReportLimit];
+
         /// <summary>采集到的融合形状字典（键 = 代理网格上的形状名）。</summary>
         public readonly Dictionary<string, float> BlendShapes = new Dictionary<string, float>(StringComparer.Ordinal);
 
@@ -180,6 +198,26 @@ namespace HoFaceTracking.Core
         }
 
         /// <summary>
+        /// 把"上一帧写进去的参数"拼成一行（前 <see cref="ReportLimit"/> 个，超出只报数）。
+        /// 事件/Trigger 类参数不算"对上"（它们不是这一帧的值，我们不主动触发）。
+        /// </summary>
+        private string BuildMatchedText(int matched)
+        {
+            if (matched <= 0) return "";
+
+            var builder = new StringBuilder();
+            int shown = matched < ReportLimit ? matched : ReportLimit;
+            for (int i = 0; i < shown; i++)
+            {
+                if (builder.Length > 0) builder.Append(" / ");
+                builder.Append(_matchedNames[i]).Append(' ').Append(_matchedValues[i].ToString("F3"));
+            }
+            if (matched > shown) builder.Append(" …共 ").Append(matched).Append(" 个");
+
+            return builder.ToString();
+        }
+
+        /// <summary>
         /// 从路径里抠出文件名（只为状态文字好看）。
         /// ⚠️ **不能用 `System.IO.Path.GetFileName`** —— UMod 的安全校验禁掉整个 `System.IO` 命名空间
         /// （2026-09-25 实测：真机构建报 `Illegal reference to disallowed namespace: System.IO`
@@ -219,22 +257,29 @@ namespace HoFaceTracking.Core
                     {
                         case AnimatorControllerParameterType.Float:
                             _animator.SetFloat(parameter.name, value);
-                            matched++;
                             break;
                         case AnimatorControllerParameterType.Bool:
                             _animator.SetBool(parameter.name, value != 0f);
-                            matched++;
                             break;
                         case AnimatorControllerParameterType.Int:
                             _animator.SetInteger(parameter.name, Mathf.RoundToInt(value));
-                            matched++;
                             break;
                         default:
-                            break;   // Trigger：不主动触发（那是"事件"，不是"这一帧的值"）
+                            continue;   // Trigger：不主动触发（那是"事件"，不是"这一帧的值"）—— 不算对上
                     }
+
+                    // 留证：前几个对上名字的（固定数组原地写，不每帧 new List）
+                    if (matched < ReportLimit)
+                    {
+                        _matchedNames[matched] = parameter.name;
+                        _matchedValues[matched] = value;
+                    }
+                    matched++;
                 }
             }
+
             MatchedParameters = matched;
+            MatchedText = BuildMatchedText(matched);
 
             // ② 求值（时间步 0：我们要的是"当前参数下的姿势"，不是推进动画）
             _animator.Update(0f);
@@ -284,6 +329,7 @@ namespace HoFaceTracking.Core
             BlendShapes.Clear();
             ParameterCount = 0;
             MatchedParameters = 0;
+            MatchedText = null;
             _restCaptured = false;
         }
 
