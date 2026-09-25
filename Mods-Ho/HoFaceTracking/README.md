@@ -171,6 +171,13 @@
 端口参数只写控制器**真有**的口（`Animator.parameters` 运行时可读），对不上的数量会显示在 `状态` 里；
 `cullingMode = AlwaysAnimate`（影子在屏幕外，默认 culling 会让它不动）。
 
+⚠️ **`状态` 里那两行的分工（2026-09-25 补，形状恒 0 时必须两行一起看）**：
+`对上参数 N 个` 是**个数**，`写入 jawOpen 0.123 / mouthSmileLeft 0.946` 才是**名字 → 值**（最多 6 个）。
+控制器模式下 `BlendShapes` **只来自代理网格**，所以"某个形状恒 0"有两个**互相独立**的原因：
+①**参数没写进 Animator**（控制器里根本没这个名字）②**控制器没把那格推到网格上**。
+只报个数时分不清是哪个 —— `mouthSmileLeft` 那次就是卡在这儿（现场见 §1.6）。
+`写入` 里的值非 0 ⇒ 输入到位，问题在控制器那一侧。
+
 **❓ 还没验证的（第一次真机跑就看这几条）**：
 
 1. ~~UMod 的安全校验放不放行 `UnityEngine.AssetBundle`~~ → **✅ 没被拦**（2026-09-25 那次构建报告里
@@ -179,7 +186,10 @@
    （而它明明放行），那套规则只能当"否定信号"，见 HoUnityTools `docs/pitfalls/BUILD_AND_TOOLING.md` §4.2。
 2. ~~用户自己打的 bundle 能不能 `LoadFromFile`~~ → **✅ 已实测**（用 `tools/Editor/HoDebugBundleBuilder.cs` 打的那份：
   打开 ✓ 载入控制器 ✓ 载入 rig ✓）。**UMod 导出的 `sharedassets.bin` 能不能直接读**仍然 ❓ 没验。
-3. ~~运行期给隐藏对象加 `Animator` 后的 `parameters` / 求值 / 采样是否照常~~ → **✅ 已实测**（2026-09-25：bundle 载入、参数对上 2 个、形状值采到并随输入变）。
+3. ~~运行期给隐藏对象加 `Animator` 后的 `parameters` / 求值 / 采样是否照常~~ → **✅ 已实测到"参数写进去"这一步**
+   （2026-09-25：bundle 载入、`Animator.parameters` 读到 2 个、`SetFloat` 每帧都写）；⚠️ **"形状真被推到网格上"当时没验成**
+   —— 那份调试 bundle 是两层结构，`mouthSmileLeft` 恒 0，分不清是没写进去还是没推到网格（见 §1.6），
+   构造器已改成单层，**结论待重打 bundle 后复验**。
 
 失败时**`状态` 会逐条点名**失败在哪一步（打不开 bundle / 里面没有控制器 / 里面没有 rig），
 `Player.log` 里也有异常本体。先用一个最小 bundle 试通，再上真控制器。
