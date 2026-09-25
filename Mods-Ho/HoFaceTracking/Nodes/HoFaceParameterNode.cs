@@ -19,6 +19,7 @@
 // ⚠️ 数据输入别叫 Name（撞 Node 基类成员，CS0108）。字段名 `Plugin` 也别用（撞 Node.Plugin 属性）。
 
 using System.Collections.Generic;
+using Cysharp.Threading.Tasks;
 using HoFaceTracking.Core;
 using HoFaceTracking.PluginMod;
 using UnityEngine;
@@ -164,10 +165,13 @@ namespace HoFaceTracking.Nodes
 
         /// <summary>
         /// `配置文件` 那个下拉列表的数据源：沙箱里的 `*.hoface.json`。
-        /// 与「HoFace控制求解」的 `控制器` 下拉同一个套路（`AutoCompleteList.Single`，
-        /// `value` = 要填进字段的**相对路径**，不是绝对路径）。
+        ///
+        /// ⚠️ **签名必须是 `async UniTask&lt;AutoCompleteList&gt;`**：不是的话**整个节点注册失败**
+        /// （2026-09-25 实测：`Exception: Method …::AutoCompleteProfile does not return UniTask`1`
+        /// → `Could not register node type …`，面板上这个节点直接消失）。别改成同步返回。
+        /// `value` = 要填进字段的**相对路径**（不是绝对路径）。
         /// </summary>
-        public AutoCompleteList AutoCompleteProfile()
+        public async UniTask<AutoCompleteList> AutoCompleteProfile()
         {
             var entries = new List<AutoCompleteEntry>();
 
@@ -182,6 +186,8 @@ namespace HoFaceTracking.Nodes
                         entries.Add(new AutoCompleteEntry { label = entry.fileName, value = entry.relativePath });
 
             if (entries.Count == 0) entries.Add(new AutoCompleteEntry { label = "（沙箱里没有 *.hoface.json）", value = "" });
+
+            await UniTask.CompletedTask;
             return AutoCompleteList.Single(entries);
         }
 

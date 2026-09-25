@@ -191,11 +191,19 @@
   （见 `Core/HoFaceProfileStore.cs` 头注释与 `Core/PORTED.md`）。
 * 节点上那个 `控制器` 是**下拉列表**（`AutoCompleteAttribute`）：列出沙箱里的 `*.bundle`，
   选中的是**文件名**。官方节点用它 200+ 处（`CharacterAsset.Source`、`BlendShapeEntry.BlendShape`…），
-  列表类型是 `AutoCompleteList` / `AutoCompleteCategory` / `AutoCompleteEntry { label, value }`。
-  ⚠️ 官方那些 `AutoComplete*` 方法是 **private** 的（实测 `LoadPendulumPhysicsProfileNode.AutoCompleteProfile`），
-  我们写 **public** —— `[AutoComplete(nameof(X))]` 按名字找，可见性不该有硬要求，选 public 是为了少一条坑。
+  列表类型是 `AutoCompleteList` / `AutoCompleteCategory` / `AutoCompleteEntry { label, value }`；
   `AutoCompleteList` 只能用 `AutoCompleteList.Single(IEnumerable<AutoCompleteEntry>)` 造
-  （它没有公开列表构造函数）。「HoFace参数处理」的 `配置文件` 用的是同一套。
+  （没有公开列表构造函数）。「HoFace参数处理」的 `配置文件` 用的是同一套。
+* 🚨 **`AutoComplete*` 方法的签名必须是 `async UniTask<AutoCompleteList>`**（`Cysharp.Threading.Tasks`）。
+  写成同步 `AutoCompleteList` 的话 —— **整个节点注册失败、面板上直接消失**，而且**本地 `compile-check` 全绿**
+  （这是运行期注册器的检查，不是编译错误）。2026-09-25 实测到的原话：
+  `Exception: Method HoFaceParameterNode::AutoCompleteProfile does not return UniTask`1`
+  → `Rethrow as Exception: Could not register node type HoFaceTracking.Nodes.HoFaceParameterNode`
+  （另一个节点同一条），结果"进 Warudo 只剩一个 VTS 接收器节点"。
+  ⚠️ 教训：查这类 API 时**不能只看返回类型名** —— 官方那些看起来"返回 `AutoCompleteList`"的样本
+  其实是**字段**不是方法；方法一律是 `UniTask<AutoCompleteList>`。
+  ⚠️ 还有一条同类的：官方那些方法是 **private**，我们写 public（`[AutoComplete(nameof(X))]` 按名字找，
+  可见性不该有硬要求；写 public 只是为了少一条坑）——这条是推断，**没有实测对照**。
 * 为什么不再用"绝对路径 + `LoadFromFile`"：菜单打出来的文件以前落在工程根 `_hodebug/`，
   **不是** Warudo 读的沙箱 —— 2026-09-25 为此白查两轮（现象：`state=<哈希>` 从头到尾不变）。
   现在打一次就落在沙箱、下拉里直接能选（§1.7）。

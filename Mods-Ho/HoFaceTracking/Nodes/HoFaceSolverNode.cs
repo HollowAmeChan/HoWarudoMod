@@ -24,6 +24,7 @@
 // ⚠️ 数据输入别叫 Name（撞 Node 基类成员，CS0108）。字段名 `Plugin` 也别用（撞 Node.Plugin 属性）。
 
 using System.Collections.Generic;
+using Cysharp.Threading.Tasks;
 using HoFaceTracking.Core;
 using HoFaceTracking.PluginMod;
 using UnityEngine;
@@ -124,13 +125,18 @@ namespace HoFaceTracking.Nodes
 
         /// <summary>
         /// 下拉列表的数据源（`[AutoComplete]` 指到这儿）：沙箱里的 `*.bundle`。
-        /// 形状照抄官方（`CharacterAsset.Source`、`BlendShapeEntry.BlendShape` 那一批）：
-        /// **返回 `AutoCompleteList`**，用官方的 `AutoCompleteList.Single(entries)` 工厂装。
+        ///
+        /// ⚠️ **签名必须是 `async UniTask&lt;AutoCompleteList&gt;`** —— Warudo 的注册器会检查返回类型，
+        /// 不是 `UniTask&lt;AutoCompleteList&gt;` 就**整个节点注册失败**（2026-09-25 实测：面板上直接少两个节点，
+        /// `Player.log` 里是 `Exception: Method …::AutoCompleteController does not return UniTask`1`
+        /// → `Could not register node type …`）。我第一版就写成同步返回 `AutoCompleteList`，栽在这儿。
+        /// （查证据时别只看返回类型名：官方那些"返回 `AutoCompleteList`"的样本其实是**字段**不是方法。）
         /// `AutoCompleteEntry.value` = 要填进字段的字符串（文件名，不是绝对路径）。
         /// </summary>
-        public AutoCompleteList AutoCompleteController()
+        public async UniTask<AutoCompleteList> AutoCompleteController()
         {
             var owner = this.Plugin as HoFaceTrackingPlugin;
+            await UniTask.CompletedTask;
             return AutoCompleteList.Single(HoFaceController.SandboxBundles(owner != null ? owner.Files : null));
         }
 
