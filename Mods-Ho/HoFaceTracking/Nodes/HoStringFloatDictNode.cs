@@ -1,8 +1,8 @@
 // HoStringFloatDictNode.cs  --  「HoStringFloatDict」：面板上手填若干 `(名字, 值)`，**直接创建一份字典**
 //
-// 【名字与家族】（2026-09-27 用户定）面板标题 **`HoStringFloatDict`** —— 它**不是**"把元组转成字典"，
+// 【名字与家族】（2026-09-27 用户定）面板标题 **`HoStringFloatDict`** —— 它**不是**"把键值对转成字典"，
 // 而是**直接创建一份字典**（手填的行就是那张表）。同一个家族里的另外几个：
-//   `HoStringFloat`（一个 `(名字, 值)` → 只含这一项的字典）· `HoStringFloatAppend`（表 + 名字 + 值 → 表）
+//   `HoStringFloat`（名字 + 值 → `KeyValuePair<string,float>` 键值对）· `HoStringFloatAppend`（表 + 键值对 → 表）
 //   · `HoStringFloatMerge`（两张表 → 一张）· `HoBool2Float`（bool → float）。
 //
 // 【为什么要有它】（2026-09-27 用户定：新节点就两个 —— 这个 +「Ho合并字典」）
@@ -10,19 +10,19 @@
 // 官方图里那 41 个字典口**全是接过来的、一个都没手填过**（2026-09-26 取证：官方场景 json 的 `typeKind`
 // 统计 + 两套程序集全量反射，见 HoUnityTools `docs/FACE_TRACKING_WARUDO_ROUTE.md` §3.5）。
 // 官方能"手填一组一组东西"的只有 `ValueArray` 与 `StructuredData`/`StructuredDataArray` ——
-// 后者就是官方的"元组"机制（面板上加/删行，字段是 `[DataInput]`）。
+// 后者就是官方面板上"一组一组填"的机制（加/删行，字段是 `[DataInput]`）—— ⚠️ 它是**结构化行**，
 // 所以"手填一张 (名字, 值) 表"这件事**只能做成节点**，而这个节点就是那个通用件。
 //
 // 【典型用法】
-//   行里填 `Ho/Drive/Gate/Lip = 0` ⇒ `字典` 喂给「Ho合并字典」的 `覆盖`（或直接喂「HoFace控制求解」）
+//   行里填 `Ho/Drive/Gate/Lip = 0` ⇒ `字典` 喂给「HoStringFloatMerge」的 `覆盖`（或直接喂「HoFace控制求解」）
 //   行里填若干常量 ⇒ 想给谁就给谁：合并字典 / 控制求解 / 写动态参数，都是同一个 `Dictionary<string,float>`。
 //
-// 【为什么输出是字典，而不是"元组列表"】（2026-09-27 定）
+// 【为什么输出是字典，而不是键值对列表】（2026-09-27 定）
 //   图里唯一的字典类型就是 `Dictionary<string,float>`，合并字典/控制求解/写动态参数的口全是它 ——
 //   这个节点输出字典 ⇒ **类型完全相同、直接能插**，而且"别的类型不许接"由 Warudo 在**接线那一刻**
 //   抛 `ArgumentException("… is not compatible with …")` 执行（比运行期自己判类型严格得多）。
-//   多态口（`object`）只有在"要接线的元组真的存在"时才有意义，而它并不存在（官方没有 Tuple/KeyValuePair
-//   端口类型，我们也不打算把自定义 struct 当图端口 —— 那属于未验证区）。
+//   多态口（`object`）只有在"要接线的键值对真的存在"时才有意义 —— 而它确实存在（`KeyValuePair<string,float>`
+//   已实测能当端口），所以"一个 `(名字, 值)`"直接用真键值对表示，不必拿"1 项字典"凑。
 //
 // 【端口规则】[DataInput] = public 字段；[DataOutput] = public 方法；
 // ⚠️ 字段名别叫 Name（撞 Node 基类）；`Plugin` 也别用（撞 Node.Plugin 属性）。

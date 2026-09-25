@@ -49,7 +49,7 @@ namespace HoFaceTracking.PluginMod
             typeof(HoDebugLogNode),
             // 通用节点（不是面捕专用，只是暂时放在这个 mod 里）—— 一组"名字 → 浮点"的表工具，
             // 前缀一致、面板里排在一起（家族说明见 Nodes/HoStringFloatNode.cs 的文件头）：
-            //   HoStringFloat       一个 (名字, 值) → 1 项字典（"元组"在图里的形态）
+            //   HoStringFloat       名字 + 值 → KeyValuePair<string,float>（"把值拼成一个键值对"）
             //   HoStringFloatAppend 表 + 名字 + 值 → 追加后的表
             //   HoStringFloatMerge  两张表 → 一张（下面的盖上面的；把控制器里恒 1 的门控覆盖成 0 就靠它）
             //   HoStringFloatDict   面板手填多行 → 直接创建一张表

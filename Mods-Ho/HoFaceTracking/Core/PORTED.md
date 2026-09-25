@@ -18,7 +18,7 @@
 | `HoFaceTrackingChannels.cs` | `Runtime/FaceTracking/HoFaceTrackingChannels.cs` | 52 个规范形态键名（外带区域/模式/平滑分组等枚举） |
 | `HoFaceNaming.cs` | `Runtime/FaceTracking/HoFaceNaming.cs` | 参数命名规则（`Ho/Drive/...`） |
 
-| `HoFaceSemanticHub.cs` | `Runtime/FaceTracking/HoFaceSemanticHub.cs` | **动态参数**：**一格一个 `(名字, 值)` 元组**（一个列表，不是两个平行数组），按名字读/写（没有这一格就当场开一格）。**写的人是中间层**（Unity 侧会话 / Warudo 侧「HoFace写动态参数」节点）。2026-09-27 起它也是**唯一的组件** —— `HoFaceSemanticConnector`（那个"把手"）删了：槽表没了之后它就只剩"再指一次 Hub" |
+| `HoFaceSemanticHub.cs` | `Runtime/FaceTracking/HoFaceSemanticHub.cs` | **动态参数**：**一格一个 `(名字, 值)` 键值对**（一个列表，不是两个平行数组），按名字读/写（没有这一格就当场开一格）。**写的人是中间层**（Unity 侧会话 / Warudo 侧「HoFace写动态参数」节点）。2026-09-27 起它也是**唯一的组件** —— `HoFaceSemanticConnector`（那个"把手"）删了：槽表没了之后它就只剩"再指一次 Hub" |
 
 **⚠️ 曾经还有两份（都已删）**：① `HoFaceSemanticConnector.cs`（"把手"，2026-09-27 删 —— 它只剩"再指一次 Hub"，而按名字读/写本来就该长在 Hub 上）；② 第 11 份 `HoFaceSemanticWriterBehaviour.cs`（「语义写手」，`StateMachineBehaviour`，挂在控制器的状态上，2026-09-26 当天加、当天删）。**
 2026-09-26 连同它那套"影子 Hub → 中继 / 求解节点的 `动态参数` 出口"一起**删除**：动态参数由**中间层**

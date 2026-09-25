@@ -37,9 +37,9 @@
 | `Nodes/HoFaceSolverNode.cs` | HoFace控制求解 | **正式** | **从参数反求动画输出**（零配置）：官方同形的 5 个口 + 一个 `状态`（**6 个输出口**；`动态参数` 那个口 2026-09-26 删了 —— 动态参数现在由中间层直接写角色 Hub） |
 | `Nodes/HoFaceHubWriteNode.cs` | HoFace写动态参数 | **正式** | 把**中间层那份参数**（参数处理的 `参数` / 「HoStringFloatMerge」的 `字典`）写进**角色身上**的 `HoFaceSemanticHub`（**只有一个组件**：直接找它；名字按名字走，**没有表**）（2 个输出口：`写入数` / `状态`） |
 | `Nodes/HoDebugLogNode.cs` | Ho调试日志 | **正式（通用件，跟面捕无关）** | 一个入口 + 一块只读显示 + 一个「复制」按钮（`[Trigger]`，**没有任何输出口**） |
-| `Nodes/HoStringFloatDictNode.cs` | HoStringFloatDict | **正式（通用件）** | **面板手填若干 `(名字, 值)` → 直接创建一份字典**。图里没有"手填字典"这回事（`Dictionary<string,float>` 是 `Reference` 类口，官方从来不手填），所以"手填一张表"只能做成节点（2 个输出口：`字典` / `状态`） |
-| `Nodes/HoStringFloatNode.cs` | HoStringFloat | **正式（通用件）** | **一个 `(名字, 值)` → `KeyValuePair<string,float>` 元组**（`元组` / `状态`）—— "把值拼成一个元组"那一步 |
-| `Nodes/HoStringFloatAppendNode.cs` | HoStringFloatAppend | **正式（通用件）** | `表` + **`元组`** → **追加后的表**（同名时这一项赢）—— "再转字典"就是它。官方同形的是 `Float List Add Element`（`字典` / `状态`） |
+| `Nodes/HoStringFloatDictNode.cs` | HoStringFloatDict | **正式（通用件）** | **面板手填若干 `(名字, 值)` 行 → 直接创建一份字典**（行是官方的 `StructuredData`，不是键值对）。图里没有"手填字典"这回事（`Dictionary<string,float>` 是 `Reference` 类口，官方从来不手填），所以"手填一张表"只能做成节点（`字典` / `状态`） |
+| `Nodes/HoStringFloatNode.cs` | HoStringFloat | **正式（通用件）** | **一个 `(名字, 值)` → `KeyValuePair<string,float>` 键值对**（`键值对` / `状态`）—— "把值拼成一个键值对"那一步 |
+| `Nodes/HoStringFloatAppendNode.cs` | HoStringFloatAppend | **正式（通用件）** | `表` + **`键值对`** → **追加后的表**（同名时这一项赢）—— "再转字典"就是它。官方同形的是 `Float List Add Element`（`字典` / `状态`） |
 | `Nodes/HoStringFloatMergeNode.cs` | HoStringFloatMerge | **正式（通用件）** | **两个输入口**：`基础` + `覆盖`，**下面的盖上面的**。官方没有"字典合并"节点（合并只给了骨骼旋转/权重两族），这个补空缺；典型用法是把控制器里恒 1 的门控覆盖成 0（`字典` / `状态`） |
 | `Nodes/HoBool2FloatNode.cs` | HoBool2Float | **正式（通用件）** | `true` → `1` / `false` → `0`。官方**没有** bool → float（转换节点与内置转换器表里都只有 `BoolToString`）—— 面捕里布尔值很多，得先转成浮点才能进那张表 |
 
@@ -79,8 +79,8 @@
 | 端口 | 说明 |
 |---|---|
 | **`HoStringFloatDict`**：`行`(10)（`HoStringFloatEntry[]`） | **面板上手填的 `(名字, 值)` 行**，加/删行、不用接线。空名字的行忽略；同名多行 ⇒ **后面的赢** |
-| **`HoStringFloat`**：`名字`(10) + `值`(20) | 一个 `(名字, 值)` → **`KeyValuePair<string,float>` 元组**。名字留空 ⇒ 元组的 `Key` 是空串（下游 `Append` 会跳过，`状态` 里明说） |
-| **`HoStringFloatAppend`**：`表`(10) + **`元组`**(20) | 把那个元组**并进表**（同名时这一项赢）；不接 `表` 就是空表起步 |
+| **`HoStringFloat`**：`名字`(10) + `值`(20) | 一个 `(名字, 值)` → **`KeyValuePair<string,float>` 键值对**。名字留空 ⇒ `Key` 是空串（下游 `Append` 会跳过，`状态` 里明说） |
+| **`HoStringFloatAppend`**：`表`(10) + **`键值对`**(20) | 把那个键值对**并进表**（同名时这一项赢）；不接 `表` 就是空表起步 |
 | **`HoStringFloatMerge`**：`基础`(10) + `覆盖`(20) | 两张表合并，**下面的盖上面的**（见下一节） |
 | **`HoBool2Float`**：`值`(bool) | `true` → `1` / `false` → `0`（官方没有这个转换） |
 | `字典`(输出) | 出来的那份表（`Dictionary<string,float>`）。每个节点都**内部复用同一个实例**（同官方 `OffsetBlendShapeNode.lastBlendShapes`） |
@@ -91,14 +91,20 @@
 两套程序集全量反射，见 HoUnityTools `docs/FACE_TRACKING_WARUDO_ROUTE.md` §3.5）。
 官方能"手填一组一组东西"的只有 `ValueArray` 与 `StructuredData` 行 —— 所以"手填一张表"**只能做成节点**。
 
-典型接法（真元组链）：`HoBool2Float → HoStringFloat（配名字）→ HoStringFloatAppend（并进表）→ 字典`；手填那条则是 `HoStringFloatDict → 字典`。都喂「HoStringFloatMerge」的 `覆盖`，
+典型接法（键值对链）：`HoBool2Float → HoStringFloat（配名字）→ HoStringFloatAppend（并进表）→ 字典`；
+手填那条则是 `HoStringFloatDict → 字典`。都喂「HoStringFloatMerge」的 `覆盖`，
 或直接喂「HoFace控制求解」/「HoFace写动态参数」。
 
-⚠️ **为什么它输出字典、而不是什么"元组类型"**：图里唯一的字典类型就是 `Dictionary<string,float>`，
-合并字典/控制求解/写动态参数的口全是它 ⇒ **类型完全相同、直接能插**；而"别的类型不许接"由 Warudo
-在**接线那一刻**抛 `ArgumentException("… is not compatible with …")` 执行（比运行期自己判类型严格得多）。
-多态口（`object`）只有在"可接线的元组类型真的存在"时才有意义，而它并不存在（官方没有
-`Tuple`/`KeyValuePair` 端口类型；多态只有 `object` 与 **转换器**两条路，见路线图 §3.5 的接线规则）。
+⚠️ **表口（字典）与键值对口各管一段**：`Dictionary<string,float>` 是图里唯一的**字典**类型，
+合并/控制求解/写动态参数的表口全是它 ⇒ 两端类型完全相同、直接能插，而"别的类型不许接"由 Warudo
+在**接线那一刻**抛 `ArgumentException("… is not compatible with …")` 执行。
+**`KeyValuePair<string,float>` 也确实是可用的端口类型**（2026-09-27 探针实测：注册通过、端口画得出来）——
+所以"一个 `(名字, 值)`"就用真键值对表示，不必拿"1 项字典"凑；多态口（`object`）只有在"一个口要同时吃
+多个类型"时才需要，而我们的分工里用不着（多态只有 `object` 与 **转换器**两条路，见路线图 §3.5.1）。
+
+> 📌 **用词**（2026-09-27 用户纠正）：`(string, float)` 这叫**键值对**，别叫"元组" ——
+> `.NET` 里那个类型本身就叫 `KeyValuePair<string,float>`，叫键值对会把"官方面板上那种一组一组的行
+> （`StructuredData`）"和它混起来。
 
 ⚠️ **跨仓验证项**：`行` 用的是 mod 自己定义的 `StructuredData<>` 行类型。类型注册是**懒加载**的
 （`StructuredDataTypeRegistry.GetTypeMeta` 首次查询时 `RegisterType`，不需要全程序集扫描），
@@ -109,7 +115,7 @@
 | 端口 | 说明 |
 |---|---|
 | `基础`(10)（`Dictionary<string,float>`） | 底表，先铺它（典型接法：参数处理节点的「参数」） |
-| `覆盖`(20)（同类型） | 盖在上面的表：**同名的键用它**（典型接法：`HoStringFloatDict` 手填的那份，或 `HoStringFloatAppend` 拼出来的那份） |
+| `覆盖`(20)（同类型） | 盖在上面的表：**同名的键用它**（典型接法：`HoStringFloatDict` 手填的那份，或 `HoStringFloatAppend` 用键值对拼出来的那份） |
 | `字典`(输出) | 合并结果（`基础` 铺一遍、`覆盖` 再盖一遍）。**内部复用同一个实例**（跟官方 `OffsetBlendShapeNode.lastBlendShapes` 同做法） |
 | `状态`(输出) | 两张表各几个键 · 结果几个键 · 新增/覆盖 · 空名字的键 |
 
@@ -135,16 +141,16 @@ Hub 与下游都拿不到真值 —— 要"两个开关的与"请在**中间层*
 （官方从不手填字典，字典一律是接过来的）。官方能"手填一组一组东西"的只有 `ValueArray`（`Single[]`/`String[]`）
 和 `StructuredData`/`StructuredDataArray`（**一行一个对象、字段是 `[DataInput]`、面板加/删行**）——
 后者就是官方面板上"一组一组填"的机制（`ContactSource : StructuredData<OnContactNode>`、`ParameterData`、
-`BlendShapeEntryData`）。**所以手填只能做成节点**：`HoStringFloatDict` 输出**字典**，于是"类型完全相同直接插"成立，
+`BlendShapeEntryData`）。**所以手填只能做成节点**（行 = 官方的 `StructuredData`）：`HoStringFloatDict` 输出**字典**，于是"类型完全相同直接插"成立，
 而"别的类型不许接"由 Warudo 在**接线那一刻**抛 `ArgumentException` 执行（接线规则见 HoUnityTools
 `docs/FACE_TRACKING_WARUDO_ROUTE.md` §3.5.1）。
 
-⚠️ **更正一条我早先说错的话**（2026-09-27 实测）：我曾说"没有元组端口类型、所以只能两个口"——
+⚠️ **更正一条我早先说错的话**（2026-09-27 实测）：我曾说"没有键值对端口类型、所以只能两个口"——
 **官方 port 词汇表里确实没有 `Tuple`/`KeyValuePair` 被用到**，但那不等于"不能写"。
 拿探针节点（`HoStringFloatProbe`，已删）在 Warudo 里跑过：`KeyValuePair<string,float>` 的端口
 **注册通过、画得出来**，悬停提示直接写 `KeyValuePair<String, Float>`；`List<KeyValuePair<string,float>>`
-同样能画。所以现在这一族用的是**真元组口**：`HoStringFloat` 吐元组、`HoStringFloatAppend` 收元组。
-（❓ 还没单独验的：元组口之间**接线**、以及蓝图**存盘/重载**之后值是否保留。）
+同样能画。所以现在这一族用的是**真键值对口**：`HoStringFloat` 吐键值对、`HoStringFloatAppend` 收键值对。
+（❓ 还没单独验的：键值对口之间**接线**、以及蓝图**存盘/重载**之后值是否保留。）
 
 ⚠️ **跨仓验证项**：`HoStringFloatDict` 的 `行` 用的是 mod 自己定义的 `StructuredData<>` 行类型。类型注册是懒加载的
 （`StructuredDataTypeRegistry.GetTypeMeta` 首次查询时注册，不需要全程序集扫描，见 Warudo.Core.dll 的 IL），
