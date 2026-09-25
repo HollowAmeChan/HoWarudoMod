@@ -17,7 +17,7 @@
 | `HoFaceProfileJson.cs` | `Runtime/FaceTracking/HoFaceProfileJson.cs` | profile 的 JSON 读写（替代 `JsonUtility`） |
 | `HoFaceTrackingChannels.cs` | `Runtime/FaceTracking/HoFaceTrackingChannels.cs` | 52 个规范形态键名（外带区域/模式/平滑分组等枚举） |
 | `HoFaceNaming.cs` | `Runtime/FaceTracking/HoFaceNaming.cs` | 参数命名规则（`Ho/Drive/...`） |
-| `HoFaceSemanticConnector.cs` | `Runtime/FaceTracking/HoFaceSemanticConnector.cs` | **语义名字表**：槽表（`key` / `note`）+ **直接引用** Hub；**顺序即下标**。2026-09-26 替掉原来的 `HoFaceSemanticAsset`（ScriptableObject 资产，已删：不做跨角色共享词表） |
+| `HoFaceSemanticConnector.cs` | `Runtime/FaceTracking/HoFaceSemanticConnector.cs` | **把动态参数挂出去的那个把手**：直接引用 Hub + 按名字读/写（**没有表、没有配置**）。2026-09-26 替掉 `HoFaceSemanticAsset`（ScriptableObject 资产），当天又把中间那一版放在它上面的"槽表"也删了 |
 | `HoFaceSemanticHub.cs` | `Runtime/FaceTracking/HoFaceSemanticHub.cs` | **语义运行期槽**：`float[] values` + `string[] names`，取值/写值/**按名字开槽**（`ClaimSlot`）。没有长度政策、不认识表 |
 | `HoFaceSemanticWriterBehaviour.cs` | `Runtime/FaceTracking/HoFaceSemanticWriterBehaviour.cs` | **语义写手**（`StateMachineBehaviour`，挂在控制器的状态上）：按表达式从 Animator 参数算值、按**名字**写进 Hub。2026-09-26 替掉"用动画曲线写 `values.<i>`"（那条要求作者预先知道下标） |
 

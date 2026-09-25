@@ -1,26 +1,22 @@
 // HoFaceHubWriteNode.cs  --  「写动态参数」：把控制器算出来的语义槽写进**角色身上**的 Hub
 //
 // 【这条链的两端各在哪】
-//   控制器（bundle 里跑）→ 它的曲线写进**影子**上的 `HoFaceSemanticHub`（只有值、没有名字）
-//   → 「HoFace控制求解」的 `动态参数` 出口（我们按下标采出来，键是 `#0`/`#1`…）
+//   控制器（bundle 里跑）→ 里面的「语义写手」（`HoFaceSemanticWriterBehaviour`，状态机行为）
+//     按**名字**在**影子 Hub** 上开槽写值
+//   → 「HoFace控制求解」的 `动态参数` 出口（我们按名字采出来）
 //   → **本节点** → 写进**角色身上**那份 Hub（`Character/…/SemanticHub`）
-// 影子那份是**代理**（只有值）；角色那份旁边还挂着 `HoFaceSemanticConnector`（名字表 + 指向 Hub）。
+// 影子那份是**代理**（只有值与写手当场声明的名字）；角色那份旁边挂着 `HoFaceSemanticConnector`（接口）。
 //
 // 【为什么要有这个节点，而不是让求解节点直接写角色】
 //   求解节点是纯函数式的"从参数反求输出"，它不认识角色（角色在官方那三个 apply 节点上选）。
 //   写角色是**副作用**，必须由一个明确的节点承担 —— 这也符合"谁写、什么时候写"要看得见那条规矩。
 //
-// 【键怎么对上下标】
-//   出口那份字典的键有两种形态：
-//     · 控制器按**下标**采（影子 Hub 没有名字）⇒ 键是下标字符串（`#0` / `#1`）；
-//     · 影子 Hub 旁边若也有 Connector ⇒ 键是语义名（`MouthOpen`）。
-//   本节点两种都吃：`#<下标>` 直接用；其它按名字去**角色的 Connector 槽表**里查下标。
-//   ⇒ 所以这条链**不靠名字**也能走通（下标是硬约定），名字只是给人看的与方便手接的。
-//
-// 【槽位数是"预留"的】
-//   Hub 的 `values` 一开始就预留固定槽位（`HoFaceSemanticHub.DefaultSlotCount`），**不跟槽表耦合**。
-//   ⚠️ 后果：下标越界时 `SetFloat` 什么都不做（而且控制器曲线越界写也不报错）——
-//   所以本节点把"跳过几个"与"表里没声明的槽里有非零值"都**摆在状态口上**，不静默。
+// 【键怎么对上下标 —— **没有表**】
+//   名字**由写的人在运行期声明**（写手 `ClaimSlot`），所以本节点也照这条走：
+//     · 名字（`MouthX`）⇒ 角色 Hub 上**已有就复用、没有就当场开一格**；
+//     · `#<下标>`（硬约定）⇒ 直接把角色 Hub 开到那个长度再写（老式纯位置写法的兼容口）。
+//   ⇒ **没有"名字对不上"的校验点了**（表 2026-09-26 删掉）：写手把名字敲错一个字符，本节点会安静地
+//   新开一个槽。发现它的办法是看**新声明**那一行（下面 `状态` 里会点名），或者跑一遍看 Hub 里的名字。
 //
 // 【端口规则】[DataInput] = public 字段；[DataOutput] = public 方法；[Trigger] = 纯按钮。
 // ⚠️ 数据输入别叫 Name（撞 Node 基类成员，CS0108）。字段名 `Plugin` 也别用（撞 Node.Plugin 属性）。
@@ -48,7 +44,7 @@ namespace HoFaceTracking.Nodes
 
         /// <summary>
         /// 语义槽：键 → 值。接「HoFace控制求解」的 `动态参数` 出口。
-        /// 键可以是 `#<下标>`（硬约定，不靠名字）或语义名（按角色的槽表查下标）。
+        /// 键通常是**语义名**（控制器里的写手声明的），也吃 `#<下标>`（老式纯位置写法）。
         /// </summary>
         [DataInput(20)]
         [Label("动态参数")]
@@ -56,7 +52,7 @@ namespace HoFaceTracking.Nodes
 
         // ── 缓存 ────────────────────────────────────────────────────────────────
 
-        /// <summary>找到的那个 Connector（**角色身上的**，名字表在它上面）。</summary>
+        /// <summary>找到的那个 Connector（**角色身上的**接口）。</summary>
         private HoFaceSemanticConnector connector;
 
         /// <summary>Connector 指向的那个 Hub（值在它上面）。Connector 没填 Hub 时是 null。</summary>
@@ -68,13 +64,13 @@ namespace HoFaceTracking.Nodes
         private int writtenLastFrame;
         private int skippedLastFrame;
 
-        /// <summary>本帧写进去的、**槽表没声明**的槽里有几个是非零的（见 <see cref="Status"/>）。</summary>
-        private int outsideLastFrame;
+        /// <summary>本帧**新声明**了几个名字（= 角色那片 Hub 上刚开出来的槽）。</summary>
+        private int claimedLastFrame;
 
-        /// <summary>那几个下标的前几个（只报几个，够定位就行）。</summary>
-        private readonly List<int> outsideSamples = new List<int>();
+        /// <summary>那几个名字的前几个（这是"控制器到底声明了什么"的唯一记录 —— 表删了之后就靠它）。</summary>
+        private readonly List<string> claimedSamples = new List<string>();
 
-        /// <summary>被跳过的键的前几个（**名字对不上时这是唯一的线索**）。</summary>
+        /// <summary>被跳过的键的前几个（键既不是名字又不像 `#下标`）。</summary>
         private readonly List<string> skippedSamples = new List<string>();
 
         private string loggedState;
@@ -107,7 +103,7 @@ namespace HoFaceTracking.Nodes
         }
 
         /// <summary>
-        /// 状态：找到 Connector 没有、Hub 有几个槽、槽表几项、本帧写了几个、跳过了几个。
+        /// 状态：找到 Connector 没有、Hub 有几个槽、本帧写了几个、跳过了几个、**新声明了哪几个名字**。
         /// **它是唯一的报错出口**（这个节点没有 flow 口，没法抛异常）。
         /// </summary>
         [DataOutput]
@@ -121,8 +117,8 @@ namespace HoFaceTracking.Nodes
 
             if (connector == null)
                 return "⚠ 这个角色上没有 HoFaceSemanticConnector"
-                    + " —— 在角色 mod 里加一个空物体挂上它（约定叫 `SemanticHub`），"
-                    + "并在它上面填好 Hub 与槽表。**本节点不会替你建**。";
+                    + " —— 在角色 mod 里加一个空物体挂上它（约定叫 `SemanticHub`），并在它上面填好 Hub。"
+                    + "**本节点不会替你建**。";
 
             if (hub == null)
                 return "⚠ Connector「" + connector.name + "」没填 Hub ⇒ 没有槽可以写"
@@ -131,34 +127,24 @@ namespace HoFaceTracking.Nodes
             int written = Apply();
             string text = "Connector：" + (connectorOwner != null ? connectorOwner.name : "?")
                 + "  ·  Hub：" + hub.name + "（" + hub.SlotCount + " 个槽）"
-                + "  ·  槽表 " + connector.Count + " 项"
                 + "\n本帧：写入 " + written + " 个"
-                + (skippedLastFrame > 0 ? "  ·  跳过 " + skippedLastFrame + " 个（键既不是 `#下标`、"
-                    + "也没在槽表里找到；或者下标越界）" : "");
+                + (skippedLastFrame > 0 ? "  ·  跳过 " + skippedLastFrame + " 个（键既不是 `#下标`、也不是能用的名字）" : "");
 
-            if (connector.Count == 0)
+            if (claimedLastFrame > 0)
             {
-                // 空表 = 纯位置模式（只认 `#下标`）。这是合法用法，但要说出来 ——
-                // 否则"名字对不上"会被误当成"表填错了"。
-                text += "\nℹ 槽表是空的 ⇒ 只认 `#<下标>`（纯位置模式），没有名字可用。";
-            }
-            else if (outsideLastFrame > 0)
-            {
-                text += "\n⚠ 有 " + outsideLastFrame + " 个**非零**值落在槽表没声明的槽里（下标 "
-                    + Join(outsideSamples) + "…）⇒ 控制器和槽表没对齐，那几个语义现在没人认领。";
+                // 这是"控制器声明了什么名字"的唯一记录（表删掉之后没有别的对照物）。
+                // 名字敲错一个字符时，这里会安静地多出一个新名字 —— 所以要点名。
+                text += "\n⚠ 新声明 " + claimedLastFrame + " 个名字：" + Join(claimedSamples)
+                    + (claimedLastFrame > claimedSamples.Count ? "…" : "")
+                    + "（控制器里写手填的语义名，角色 Hub 上刚开出来的槽）";
             }
 
             if (skippedLastFrame > 0 && skippedSamples.Count > 0)
-            {
-                // 最常见的一种错：控制器里"语义写手"填的名字与角色槽表里的名字差一个字符。
-                // 那种错**完全不报错**，只表现为"某个语义永远不动" —— 所以这里点名。
                 text += "\n⚠ 跳过的键里有：" + Join(skippedSamples)
-                    + (skippedLastFrame > skippedSamples.Count ? "…" : "")
-                    + " ⇒ 名字既不在槽表里、又不像 `#下标`（多半是两边名字对不上）。";
-            }
+                    + (skippedLastFrame > skippedSamples.Count ? "…" : "");
 
             if (hub.SlotCount == 0)
-                text += "\n⚠ Hub 的 values 是空的（0 个槽）⇒ 什么都写不进去。";
+                text += "\n⚠ 本帧既没有名字、也没有 `#下标` ⇒ 一个槽都没开出来。";
 
             return text;
         }
@@ -180,7 +166,7 @@ namespace HoFaceTracking.Nodes
         /// 角色被换掉（引用变了）或 Connector 被删了，都会重新找。
         ///
         /// ⚠️ **找不到就是找不到，本节点绝不替你建一个。** 往用户的角色上自动加组件是"改他的东西"，
-        /// 而且建出来的那个没有槽表、只有下标，只会让后面更难查。
+        /// 而且建出来的那个没有 Hub、也没有名字，只会让后面更难查。
         /// （Unity 侧调试面板同一条口径：只找不建。）
         /// </summary>
         private void EnsureHub()
@@ -206,14 +192,11 @@ namespace HoFaceTracking.Nodes
         private int Apply()
         {
             skippedLastFrame = 0;
-            outsideLastFrame = 0;
-            outsideSamples.Clear();
+            claimedLastFrame = 0;
+            claimedSamples.Clear();
             skippedSamples.Clear();
 
             if (hub == null || Values == null || Values.Count == 0) { writtenLastFrame = 0; return 0; }
-
-            // 角色这边的 Hub 按槽表开够槽（只增不减）—— 控制器那边是它自己开槽的，两边互不知情。
-            hub.Reserve(connector.Count);
 
             int written = 0;
             foreach (var pair in Values)
@@ -228,14 +211,6 @@ namespace HoFaceTracking.Nodes
 
                 hub.SetFloat(index, pair.Value);
                 written++;
-
-                // "槽表没声明、但控制器写了非零值" —— 唯一会静默出错的错配形态，必须报。
-                // 只数**非零**：预留的槽里绝大多数恒为 0，全算进来会变成每帧刷屏。
-                if (connector.Count > 0 && index >= connector.Count && pair.Value != 0f)
-                {
-                    outsideLastFrame++;
-                    if (outsideSamples.Count < 4) outsideSamples.Add(index);
-                }
             }
 
             writtenLastFrame = written;
@@ -244,9 +219,10 @@ namespace HoFaceTracking.Nodes
         }
 
         /// <summary>
-        /// 键 → 下标。先认 `#<下标>`（硬约定，不靠名字），再拿角色的**槽表**按名字查。
-        /// 两头都不中就返回 −1（**跳过**，不是写 0 —— "没声明这个槽"和"显式写 0"是两件事）。
-        /// 越界的下标同样返回 −1（`SetFloat` 越界是静默的，所以要在这一层拦住并计数）。
+        /// 键 → 下标。
+        /// · `#<下标>`（硬约定）：把 Hub 开到那个长度，直接用那个下标；
+        /// · 别的都当**名字**：已有就复用，没有就**当场开一格**（名字由控制器里的写手声明，本节点只是照抄）。
+        /// 键为空返回 −1（**跳过**，不是写 0 —— "没声明这个槽"和"显式写 0"是两件事）。
         /// </summary>
         private int Resolve(string key)
         {
@@ -255,28 +231,27 @@ namespace HoFaceTracking.Nodes
             if (key[0] == '#')
             {
                 int index;
-                if (int.TryParse(key.Substring(1), out index) && index >= 0 && index < hub.SlotCount) return index;
+                if (int.TryParse(key.Substring(1), out index) && index >= 0)
+                {
+                    hub.Reserve(index + 1);
+                    return index;
+                }
                 return -1;
             }
 
-            int byName = connector.IndexOf(key);
-            return byName >= 0 && byName < hub.SlotCount ? byName : -1;
-        }
+            int byName = hub.IndexOfName(key);
+            if (byName >= 0) return byName;
 
-        /// <summary>把几个下标拼成 `1、3、7`。</summary>
-        private string Join(List<int> indices)
-        {
-            if (indices == null || indices.Count == 0) return "—";
-            var text = new System.Text.StringBuilder();
-            for (int i = 0; i < indices.Count; i++)
+            byName = hub.ClaimSlot(key);
+            if (byName >= 0)
             {
-                if (i > 0) text.Append('、');
-                text.Append(indices[i]);
+                claimedLastFrame++;
+                if (claimedSamples.Count < 6) claimedSamples.Add(key);
             }
-            return text.ToString();
+            return byName;
         }
 
-        /// <summary>把几个键拼成 `MouthX、MouthY`。</summary>
+        /// <summary>把几个名字/下标拼成 `MouthX、MouthY`。</summary>
         private string Join(List<string> names)
         {
             if (names == null || names.Count == 0) return "—";
@@ -292,13 +267,14 @@ namespace HoFaceTracking.Nodes
         /// <summary>结构变了才写一行日志（键数/槽数/写入数变化时），免得每帧刷屏。</summary>
         private void LogOnce()
         {
-            string state = "槽 " + (hub != null ? hub.SlotCount : 0) + " · 表 " + (connector != null ? connector.Count : 0)
+            string state = "槽 " + (hub != null ? hub.SlotCount : 0)
                 + " · 收到 " + (Values != null ? Values.Count : 0)
                 + " · 写入 " + writtenLastFrame + " · 跳过 " + skippedLastFrame
-                + " · 表外非零 " + outsideLastFrame;
+                + " · 新声明 " + claimedLastFrame;
             if (state == loggedState) return;
             loggedState = state;
             Debug.Log("[Ho 面捕] 写动态参数 " + state
+                + (claimedLastFrame > 0 ? "  ·  新名字 " + Join(claimedSamples) : "")
                 + (connector != null && connector.hub == null ? "  ·  ⚠ Connector 没填 Hub" : ""));
         }
     }
