@@ -204,9 +204,10 @@
   其实是**字段**不是方法；方法一律是 `UniTask<AutoCompleteList>`。
   ⚠️ 还有一条同类的：官方那些方法是 **private**，我们写 public（`[AutoComplete(nameof(X))]` 按名字找，
   可见性不该有硬要求；写 public 只是为了少一条坑）——这条是推断，**没有实测对照**。
-* 为什么不再用"绝对路径 + `LoadFromFile`"：菜单打出来的文件以前落在工程根 `_hodebug/`，
+* 为什么不再用"绝对路径 + `LoadFromFile`"：以前的打包菜单把文件落在工程根 `_hodebug/`，
   **不是** Warudo 读的沙箱 —— 2026-09-25 为此白查两轮（现象：`state=<哈希>` 从头到尾不变）。
-  现在打一次就落在沙箱、下拉里直接能选（§1.7）。
+  现在两边统一成"沙箱里的文件名 + 下拉里选"（§1.7）。⚠️ 打包工具搬到 HoUnityTools 包之后，
+  **输出目录由你在 HoFT 页上选**，工具不再替你决定落点 —— 所以打完自己确认一下它在沙箱里。
 
 **怎么读结果**（`Animator` **没有**"读混合树输出"的 API —— `GetFloat` 读的是你写进去的输入）：
 `SkinnedMeshRenderer.GetBlendShapeWeight`（Unity 是 0..100 → 我们 /100 成 0..1）+
@@ -362,18 +363,20 @@
 * 用法：在「HoFace参数处理」的 `配置文件` 里填 `ho-debug-android.hoface.json`（沙箱里那份；沙箱路径见 `状态` 口）。
   **改这个文件不用重启**：配置按文件时间戳失效重读（`HoFaceProfileStore`），存盘后一秒内自动生效。
 
-**② 一个调试用的控制器 bundle**：菜单 **`HoWarudoModTests/造调试用控制器 bundle（AssetBundle）`**
-（脚本 `tools/Editor/HoDebugBundleBuilder.cs`，**Editor 专用、不进 mod 包**）。
+**② 一个调试用的控制器**：**工具已经不在这个工作区里了**（2026-09-25 搬走，用户指出
+"HoWarudoModTests 怎么没砍"）。现在两步都在 **HoUnityTools 包**里：
 
-* 它造什么：一个三角形网格 + 两个 blend shape（名字故意 = 规范参数名 `jawOpen` / `mouthSmileLeft`）、
-  一个 rig 预制体（`Animator` + `SkinnedMeshRenderer`、`updateWhenOffscreen`）、
-  一个**单层控制器**：一条 `FreeformDirectional2D` 混合树、四个角各一条 clip（每个 clip **同时**写两个形状），
-  打成一个 `hoface-controller-test.bundle`（**ChunkBasedCompression**，别用默认 LZMA —— 我们走
-  `LoadFromMemory`，那份要整段解压，内存路线更容易炸）。
-* **落在哪**：直接打进 **Warudo 的插件沙箱**（`SandboxFolder` 常量 = 跟中间层配置同一个目录），
-  也就是节点那个下拉列表列的地方 —— 按完菜单**不用再复制**。没装 Warudo 时才退回 `_hodebug/`，
-  并在日志里明确警告"Warudo 读不到这里"。
-* ⚠️ **第一版是"两层、每层一条 1D 树"（一层一个参数），它是个坑，别改回去**：两层都是 `Override` +
+1. **造资产**：菜单 **`HoUnityTools/面捕/造调试控制器（资产）`**
+   （`Editor/FaceTracking/HoFaceDebugControllerBuilder.cs`）—— 造出一个三角形网格 + 两个 blend shape
+   （名字故意 = 规范参数名 `jawOpen` / `mouthSmileLeft`）、一个 rig 预制体、一个**单层控制器**，
+   落在**工程内** `Assets/HoFaceDebugController/`（可以在编辑器里直接看）。
+2. **打包**：**`HoUnityTools / FastBuildWarudoMod` 的 `HoFT` 页** ——
+   控制器 = 刚造的那份；**绑定预制体** = `HoDebugRig`；输出目录 = Warudo 的插件沙箱 → 打包。
+   打成 `*.bundle`（**ChunkBasedCompression**，别用默认 LZMA —— 我们走 `LoadFromMemory`，
+   那份要整段解压，内存路线更容易炸）。打包那一页会顺手校验"每条绑定路径在这份预制体里解析得到吗"。
+   ⚠️ 输出目录**由你选**，所以**打完要自己确认落在沙箱里**（HoFT 页不会替你决定）。
+
+* ⚠️ **第一版控制器是"两层、每层一条 1D 树"（一层一个参数），它是个坑，别改回去**：两层都是 `Override` +
   状态默认 `WriteDefaultValues = 1`，两层同时往**同一批属性**上写（各自还把自己的默认值写回去），
   谁赢取决于层的混合语义 —— 实测现象是 `mouthSmileLeft` 恒 0、`jawOpen` 也只有极小值，
   而且完全分不清是"参数没写上"还是"第二层没生效"。单层一条树就没有这个歧义：所有绑定在**同一个 motion** 里。
@@ -403,8 +406,8 @@
   ⇒ 现在 `状态` 多一行 `写入 jawOpen 0.123 / mouthSmileLeft 0.946`（`HoFaceController.MatchedText`）：
   只要这行里 `mouthSmileLeft` 不是 0，就说明**输入到位了**，问题 100% 在控制器那一侧。
 * 控制器那一侧的嫌疑已经定位到**第一版 bundle 的两层结构**（`Override` + `WriteDefaultValues = 1` 互写），
-  `tools/Editor/HoDebugBundleBuilder.cs` 已改成**单层一条 2D 混合树**。
-  ⚠️ **旧的 `hoface-controller-test.bundle` 不会自己变**：必须在 Unity 里重按一次菜单重造，
+  调试控制器已改成**单层一条 2D 混合树**（现在是包里的 `HoFaceDebugControllerBuilder`，见 §1.5 ②）。
+  ⚠️ **旧的 `hoface-controller-test.bundle` 不会自己变**：必须重新造控制器 + 用 HoFT 页重打，
   再在节点上按 `重读控制器`（`HoFaceController.Prepare` 对同一路径是直接返回的，认不出文件被换过）。
 * 2026-09-25 第二轮现场（用户重打后仍然 0）：`状态`/日志给出
   `写入 jawOpen 0.118 / mouthSmileLeft 0.423`（**参数确实写进 Animator 了**）、
@@ -432,10 +435,11 @@
 | 控制器 bundle | `…\Plugins\Data\hollow.hofacetracking\hoface-controller-test.bundle` | `<工程根>\_hodebug\…bundle` | `state=<哈希>` **一直不变**，`clip` 条数/名字也不变 |
 | mod 代码 | `…\Warudo_Data\StreamingAssets\Plugins\HoFaceTracking.warudo` | `Mods-Ho/HoFaceTracking/*.cs` | 新加的日志行**一条都不出现** |
 
-* ✅ **bundle 那个坑已经堵上**（2026-09-25 当天）：菜单改成**直接打进沙箱**
-  （`HoDebugBundleBuilder.SandboxFolder`），节点改成**沙箱文件名 + 下拉列表**
+* ✅ **bundle 那个坑已经堵上**（2026-09-25 当天）：节点改成**沙箱文件名 + 下拉列表**
   （`HoFaceController.Prepare(files, name)` → `ReadFileBytes` → `LoadFromMemory`）。
-  现在按一次菜单就到位，**不用再手工复制**；装在别处（没有那个目录）时才退回 `_hodebug/` 并**在日志里警告**。
+  ⚠️ **工具搬家之后，落点改由你负责**：造资产在包的 `HoUnityTools/面捕/造调试控制器`，
+  打包在包 FastBuild 的 `HoFT` 页，**输出目录由你选**（选沙箱）。
+  也就是说"打进沙箱"不再是自动的 —— 打完照下面第 2 条确认一次。
   另见 §1.1.2 的路径口径。
 * `.warudo` 是**打包产物**：改了 `.cs` 不重新打包，Warudo 加载的还是旧 DLL。
   ⚠️ 判据：`HoFaceTracking.warudo` 的 mtime **必须晚于**你最后改的 `.cs`。
