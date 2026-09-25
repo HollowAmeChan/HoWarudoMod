@@ -214,6 +214,11 @@ namespace HoFaceTracking.Nodes
             if (controllerActive && !string.IsNullOrEmpty(controller.MatchedText))
                 text += "\n写入 " + controller.MatchedText;
 
+            // 载入时的一次性自检：代理网格上有哪些形状名 / 网格能不能被写 / 状态机在不在跑。
+            // 形状恒 0 时的另外两条线索都在这儿（网格上没有那个形状名 = 写了也没人接）。
+            if (controllerActive && !string.IsNullOrEmpty(controller.Report))
+                text += "\n自检 " + controller.Report;
+
             return text;
         }
 

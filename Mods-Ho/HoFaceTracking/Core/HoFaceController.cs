@@ -91,8 +91,23 @@ namespace HoFaceTracking.Core
         /// <summary>`MatchedText` 里最多列几个参数（节点 `状态` 是给人看的，别摊开 200 个）。</summary>
         private const int ReportLimit = 6;
 
+        /// <summary>采样那次日志写过了没有（见 `Solve` 的第 ⑤ 步）。</summary>
+        private bool _loggedSample;
+
         private readonly string[] _matchedNames = new string[ReportLimit];
         private readonly float[] _matchedValues = new float[ReportLimit];
+
+        /// <summary>
+        /// `Prepare` 时做的一次性自检报告（**只报事实，别拿它当结论**）：
+        ///   · `.shapes[a,b]` —— 代理网格上**真实存在**的 blend shape 名（前几个）。
+        ///     ⚠️ `SkinnedMeshRenderer.GetBlendShapeWeight` 是**按名字**取权重的：控制器里写了
+        ///     `blendShape.foo` 而这个网格上根本没有 `foo`，Unity **不会报错**，那一格就永远是 0。
+        ///     这是"形状恒 0"的第三条可能原因（前两条见 <see cref="MatchedText"/>）。
+        ///   · `.roundtrip ok=` —— 拿第一个形状做"写 37 → 立刻读回来"的往返：这一步**绕开 Animator**，
+        ///     验的是"这个代理网格到底会不会动"。`ok=True got=37 count=N` 说明网格本身没问题。
+        ///   · `.state=hash` —— `Animator` 当前状态的全路径哈希（说明状态机在不在跑）。
+        /// </summary>
+        public string Report { get; private set; }
 
         /// <summary>采集到的融合形状字典（键 = 代理网格上的形状名）。</summary>
         public readonly Dictionary<string, float> BlendShapes = new Dictionary<string, float>(StringComparer.Ordinal);
@@ -194,7 +209,59 @@ namespace HoFaceTracking.Core
             _restCaptured = false;
             Status = "已载入：" + FileName(path) + "（参数 " + ParameterCount + " 个，形状 "
                 + _shapeNames.Count + " 个，网格 " + _meshes.Count + " 个）";
+            Report = BuildReport();
+
+            // 同一句话也写进 Player.log：`状态` 口要接线才看得到，日志不用。
+            // （2026-09-25 的教训：`状态` 多了一行用户却没看见，白等了一轮。）
+            Debug.Log("[Ho 面捕] 控制器 " + Status + " · 自检 " + Report);
             return true;
+        }
+
+        /// <summary>
+        /// 载入后的一次性自检（见 <see cref="Report"/> 的说明）。**只写进 `状态` 文字，不影响求值** ——
+        /// 往返测试写完立刻用原值还原。
+        /// </summary>
+        private string BuildReport()
+        {
+            var builder = new StringBuilder();
+
+            // 网格上真实存在的形状名（前 8 个）——控制器里的 `blendShape.xxx` 必须在这里面才可能有非 0 权重
+            builder.Append("shapes[");
+            int shown = _shapeNames.Count < 8 ? _shapeNames.Count : 8;
+            for (int i = 0; i < shown; i++)
+            {
+                if (i > 0) builder.Append(',');
+                builder.Append(_shapeNames[i]);
+            }
+            if (_shapeNames.Count > shown) builder.Append(",…");
+            builder.Append(']');
+
+            // 往返：绕开 Animator，验这个代理网格自己会不会动
+            builder.Append("  ·  roundtrip ");
+            if (_meshes.Count == 0 || _shapeNames.Count == 0)
+            {
+                builder.Append("（没有网格/形状，测不了）");
+            }
+            else
+            {
+                var renderer = _meshes[0];
+                float before = renderer.GetBlendShapeWeight(0);
+                renderer.SetBlendShapeWeight(0, 37f);
+                float after = renderer.GetBlendShapeWeight(0);
+                renderer.SetBlendShapeWeight(0, before);
+                builder.Append(before.ToString("F1")).Append("→37→").Append(after.ToString("F1"))
+                    .Append(after > 36.9f && after < 37.1f ? " 可写✓" : " 写不进去✗");
+            }
+
+            // 状态机在不在跑（全路径哈希）
+            if (_animator != null)
+            {
+                AnimatorStateInfo info = _animator.GetCurrentAnimatorStateInfo(0);
+                builder.Append("  ·  state=").Append(info.fullPathHash)
+                    .Append(" t=").Append(info.normalizedTime.ToString("F2"));
+            }
+
+            return builder.ToString();
         }
 
         /// <summary>
@@ -304,6 +371,24 @@ namespace HoFaceTracking.Core
                 BoneRotations[i] = Quaternion.Inverse(_restPose[i]) * bone.localRotation;
             }
             _restCaptured = true;
+
+            // ⑤ 采样结果写一次日志（**只写一次**，只在"有输入"时）。
+            // 为什么要有它：`状态`/`BlendShapes` 两个口都得接线才看得见，而"控制器到底动没动"
+            // 是每次联调的第一个问题。写一次就够了 —— 它报的是"某一帧采到什么"，不是每帧变化。
+            if (!_loggedSample && !string.IsNullOrEmpty(MatchedText))
+            {
+                _loggedSample = true;
+                var line = new StringBuilder();
+                line.Append("[Ho 面捕] 控制器采样 写入 ").Append(MatchedText).Append("  →  采到 ");
+                bool first = true;
+                foreach (var pair in BlendShapes)
+                {
+                    if (!first) line.Append(" / ");
+                    line.Append(pair.Key).Append(' ').Append(pair.Value.ToString("F4"));
+                    first = false;
+                }
+                Debug.Log(line.ToString());
+            }
         }
 
         /// <summary>释放：销毁影子、卸掉 bundle。</summary>
@@ -330,6 +415,8 @@ namespace HoFaceTracking.Core
             ParameterCount = 0;
             MatchedParameters = 0;
             MatchedText = null;
+            Report = null;
+            _loggedSample = false;
             _restCaptured = false;
         }
 
