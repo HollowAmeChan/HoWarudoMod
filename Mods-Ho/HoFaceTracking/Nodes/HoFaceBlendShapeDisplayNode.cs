@@ -32,17 +32,10 @@ namespace HoFaceTracking.Nodes
         [DataInput(6), Label("整体缩放")]
         public float Scale = .035f;
 
-        [DataInput(7), Label("附加旋转"),
-         Description("在「自动面向主相机」之后叠加，作用在面板自己的局部轴上。默认 (0,0,0) 即正确 —— " +
-                     "朝向由自动面向相机单独决定，不需要再补 180。" +
-                     "Z 填 180 = 面板绕自身正前方向自转半圈（文字上下颠倒，但不会变镜像）。" +
-                     "⚠️ 旋转修不了镜像，真正左右镜像要用负缩放。")]
+        [DataInput(7), Label("附加旋转")]
         public Vector3 ExtraRotation = Vector3.zero;
 
-        [DataInput(8), Label("列反向展开"),
-         Description("让列朝另一侧铺开，**不动朝向**。面板「长在角色的哪一边」用这个调 —— " +
-                     "负责文字正反面的那个 180° 旋转会同时把列的铺开方向翻过去，用旋转调会把文字也翻掉。" +
-                     "已实测默认 true 时位置正确。")]
+        [DataInput(8), Label("列反向展开")]
         public bool ReverseColumns = true;
 
         static readonly List<HoFaceBlendShapeDisplayNode> instances = new List<HoFaceBlendShapeDisplayNode>();
