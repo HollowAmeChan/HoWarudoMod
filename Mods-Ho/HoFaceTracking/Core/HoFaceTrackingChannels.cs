@@ -1,7 +1,7 @@
 // ============================================================================
 // PORTED FILE - do not edit here.
 // Master: HoUnityTools/Runtime/FaceTracking/<same file name>
-// Re-sync: see Core/PORTED.md (script: .research/sync-modcore.ps1)
+// Re-sync: see Core/PORTED.md (script: Tests~/SyncFaceModCore.ps1)
 // Only the namespace differs; the code is otherwise byte-identical.
 // ============================================================================
 

@@ -1,7 +1,7 @@
 // ============================================================================
 // PORTED FILE - do not edit here.
 // Master: HoUnityTools/Runtime/FaceTracking/<same file name>
-// Re-sync: see Core/PORTED.md (script: .research/sync-modcore.ps1)
+// Re-sync: see Core/PORTED.md (script: Tests~/SyncFaceModCore.ps1)
 // Only the namespace differs; the code is otherwise byte-identical.
 // ============================================================================
 
@@ -22,6 +22,18 @@ namespace HoFaceTracking.Core
     {
         /// <summary>驱动层产出的所有参数的根。</summary>
         public const string ParameterRoot = "Ho/Drive";
+
+        /// <summary>
+        /// **风格化形态的内部行**的前缀：`Ho/Style/*`。它们只被别的输出行用 `out("…")` 读，
+        /// **不写控制器参数**；而且它们里**同名多行是有意的** —— 规则二的「双重形态」链就是
+        /// "读自己、写自己"（输出表缓存：后写覆盖先写，见 docs/VTS_HQ_CONTROLLER.md §5.6）
+        /// ⇒ 所有"判重名 / 判是否写控制器"的地方都得先问这一句。
+        /// </summary>
+        public const string StyleRoot = "Ho/Style/";
+
+        /// <summary>这一行的参数名是不是风格化内部行（见 <see cref="StyleRoot"/>）。</summary>
+        public static bool IsStyleRow(string parameter) =>
+            !string.IsNullOrEmpty(parameter) && parameter.StartsWith(StyleRoot, System.StringComparison.Ordinal);
 
         // ── 轴语义（正端在前）──────────────────────────────────────────────────
         /// <summary>眼睑开合：<c>+1</c> 闭 / <c>-1</c> 睁大 / <c>0</c> 中性。</summary>

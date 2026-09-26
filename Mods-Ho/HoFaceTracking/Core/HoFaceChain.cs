@@ -56,6 +56,7 @@ namespace HoFaceTracking.Core
         private readonly float[] inputSmooth;
         private readonly int[] inputStepIndex;
         private readonly double[] inputStepUntil;
+        private readonly Queue<(double At, float Value)>[] inputDelay;
 
         /// <summary>
         /// 规范名 → 输入行号。
@@ -78,6 +79,8 @@ namespace HoFaceTracking.Core
         private readonly float[] outputSmooth;
         private readonly int[] stepIndex;
         private readonly double[] stepUntil;
+        private readonly Queue<(double At, float Value)>[] outputDelay;
+        private readonly HoFaceOutputTable outputTable = new HoFaceOutputTable();
 
         /// <summary>表达式引用到的变量名（草稿：每行求值时攒一遍，见 <see cref="Evaluate"/>）。</summary>
         private readonly List<string> touched = new List<string>();
@@ -103,6 +106,7 @@ namespace HoFaceTracking.Core
             inputSmooth = new float[inputList.Count];
             inputStepIndex = new int[inputList.Count];
             inputStepUntil = new double[inputList.Count];
+            inputDelay = new Queue<(double At, float Value)>[inputList.Count];
             for (int i = 0; i < inputStepIndex.Length; i++) inputStepIndex[i] = -1;
             for (int i = 0; i < inputList.Count; i++)
             {
@@ -113,8 +117,14 @@ namespace HoFaceTracking.Core
                 inputValues[i] = inputList[i].defaultValue;
                 HoFaceExpression parsed;
                 string parseError;
-                if (HoFaceExpression.TryParse(inputList[i].expression, out parsed, out parseError))
-                    inputExpressions[i] = parsed;
+                if (string.IsNullOrWhiteSpace(inputList[i].expression))
+                    inputExpressions[i] = null; // 常量输入保留 defaultValue，不报解析错误。
+                else if (HoFaceExpression.TryParse(inputList[i].expression, out parsed, out parseError))
+                {
+                    string misuse = HoFaceOutputOrder.InputRowError(inputList[i]);
+                    if (misuse != null) Note("第 " + (i + 1) + " 条输入行（" + inputList[i].parameter + "）：" + misuse);
+                    else inputExpressions[i] = parsed;
+                }
                 else
                     Note("第 " + (i + 1) + " 条输入行的表达式用不了（" + inputList[i].parameter + "）：" + parseError);
 
@@ -130,16 +140,19 @@ namespace HoFaceTracking.Core
             outputSmooth = new float[rows.Count];
             stepIndex = new int[rows.Count];
             stepUntil = new double[rows.Count];
+            outputDelay = new Queue<(double At, float Value)>[rows.Count];
             for (int i = 0; i < stepIndex.Length; i++) stepIndex[i] = -1;   // −1 = 还没进任何档
 
             for (int i = 0; i < rows.Count; i++)
             {
                 outputs[i] = rows[i];
-                if (rows[i] == null || string.IsNullOrEmpty(rows[i].parameter)) continue;
+                if (rows[i] == null) continue;
 
                 HoFaceExpression parsed;
                 string parseError;
-                if (HoFaceExpression.TryParse(rows[i].expression, out parsed, out parseError))
+                if (string.IsNullOrWhiteSpace(rows[i].expression))
+                    expressions[i] = null; // 常量输出绕过曲线，修饰符照常执行。
+                else if (HoFaceExpression.TryParse(rows[i].expression, out parsed, out parseError))
                     expressions[i] = parsed;
                 else
                     Note("第 " + (i + 1) + " 行的表达式用不了（" + rows[i].parameter + "）：" + parseError);
@@ -149,6 +162,14 @@ namespace HoFaceTracking.Core
                 //   认不出的融合形状名 → 报一句配置问题，键仍用它本身（求解器只认角色真有的键，传下去无害）
                 //   保留名（`Head/RotX` 之类）与其它名字 → 原样
                 outputKeys[i] = OutputKey(rows[i].parameter, i);
+            }
+
+            var orderErrors = HoFaceOutputOrder.Validate(rows);
+            for (int i = 0; i < orderErrors.Length; i++)
+            {
+                if (orderErrors[i] == null) continue;
+                expressions[i] = null;
+                Note("第 " + (i + 1) + " 行的引用顺序不对（" + rows[i].parameter + "）：" + orderErrors[i]);
             }
         }
 
@@ -174,6 +195,7 @@ namespace HoFaceTracking.Core
         /// <param name="now">分档修饰符用的时刻（秒，单调递增即可）。</param>
         public void Evaluate(Dictionary<string, float> rawValues, float deltaTime, double now)
         {
+            deltaTime = Mathf.Max(0f, deltaTime);
             current = rawValues;
             EvaluateInputs(rawValues, deltaTime, now);
             EvaluateOutputs(deltaTime, now);
@@ -222,7 +244,7 @@ namespace HoFaceTracking.Core
 
                 value = inputRows[row].Transform(value);
                 value = ApplyModifiers(row, inputRows[row], value, deltaTime, now,
-                    inputSmooth, inputStepIndex, inputStepUntil);
+                    inputSmooth, inputStepIndex, inputStepUntil, inputDelay);
                 inputValues[row] = value;
                 inputFresh[row] = true;
             }
@@ -231,19 +253,37 @@ namespace HoFaceTracking.Core
         /// <summary>求值输出行：表达式 → 曲线 → 有序修饰符。</summary>
         private void EvaluateOutputs(float deltaTime, double now)
         {
+            outputTable.Clear();
             for (int row = 0; row < outputs.Length; row++)
             {
                 var output = outputs[row];
-                if (output == null) { outputValues[row] = 0f; continue; }
+                if (output == null) continue;
                 // 表达式留空 = **常量行**（门控那种"不需要输入、总有默认值"的东西就靠它）；
                 // 表达式写了但解析不了时也退回这个作者声明过的默认值（比魔法 0 诚实）。
-                // ⚠️ 常量行**不过曲线**：作者填 1 就该得 1（曲线是给"算出来的值"整形用的）。修饰符照走。
+                // ⚠️ 常量行**不过曲线**：作者填 1 就该得 1（曲线是给"算出来的值"整形用的）。
+                // 修饰符照走 —— 想让常量入场时爬上去，给它加一个 Smooth。
+                // ⚠️ 引用顺序不对的行（引用了下面的行 / 引用了不存在的行）在编译期就被置成 null
+                //    ⇒ 走同一条路：**始终输出 defaultValue**。
                 float value = expressions[row] != null
-                    ? output.Transform(expressions[row].Evaluate(Lookup))
+                    ? output.Transform(expressions[row].Evaluate(Lookup, LookupOutput))
                     : output.defaultValue;
-                outputValues[row] = ApplyModifiers(row, output, value, deltaTime, now);
+                value = ApplyModifiers(row, output, value, Mathf.Max(0f, deltaTime), now);
+
+                // ⑤ **极小值归零**（2026-09-27 用户实测）：面板用 F4 显示，于是"影子台里是
+                //    −4.949414e-40（非规格化数）而面板显示 0.0000"这种不一致会让人怀疑管线。
+                //    轴与门的有效分辨率远大于 1e-6（面板四位小数都印不出来），所以低于它的值一律
+                //    当成 0：面板 / 影子台 / 角色 Hub 三处从此一致，顺带免掉非规格化数在部分 CPU 上的
+                //    慢路径。（来源不在我们这几行里：in-engine 实测**静息时 30 根轴全是精确 0**，
+                //    门是精确 1；能造出非规格化数的只有 `Mathf.Exp` 那一处，它被 `1 - exp` 吃掉了。）
+                if (value != 0f && Mathf.Abs(value) < 1e-6f) value = 0f;
+
+                outputValues[row] = value;
+                outputTable.Write(output.parameter, value);   // 同名多行：表里永远是"最后写的那一份"
             }
         }
+
+        /// <summary>读取本帧上方最近写入的同名输出；不经过出口名称转换。</summary>
+        private float LookupOutput(string name) => outputTable.Read(name);
 
         /// <summary>
         /// 输出行的表达式取值：先看**同名输入行里最后声明的那个**（覆盖 / 优先级），再回退到原始线名。
@@ -269,14 +309,13 @@ namespace HoFaceTracking.Core
         }
 
         /// <summary>
-        /// 有序修饰符。按列出顺序生效（照 VBridger 的输出修饰符）：平滑 / 分档（延迟**还没实现**）。
-        /// 输入行与输出行共用这一套实现，只是状态数组各带一份。
+        /// 有序修饰符。按列出顺序生效（照 VBridger 的输出修饰符）：
+        /// 平滑 / 延迟 / 维持，按修饰符链的顺序依次作用。
+        /// 输入行与输出行共用这一套实现，只是状态数组各带一份（<paramref name="smooth"/> 等）。
         /// </summary>
-        private float ApplyModifiers(int row, HoFaceOutput output, float value, float deltaTime, double now) =>
-            ApplyModifiers(row, output, value, deltaTime, now, outputSmooth, stepIndex, stepUntil);
-
         private float ApplyModifiers(int row, HoFaceOutput output, float value, float deltaTime, double now,
-            float[] smooth, int[] stepRows, double[] stepUntilRows)
+            float[] smooth, int[] stepRows, double[] stepUntil,
+            Queue<(double At, float Value)>[] delay)
         {
             if (output.modifiers == null || output.modifiers.Count == 0) return value;
             for (int i = 0; i < output.modifiers.Count; i++)
@@ -286,28 +325,71 @@ namespace HoFaceTracking.Core
                 switch (modifier.kind)
                 {
                     case HoFaceModifierKind.Smooth:
-                        // 只有**第一帧**做一次性初始化，免得开场从 0 扫过来。
+                        // 只有**会话第一帧**做一次性初始化，免得开场从 0 扫过来。
                         smooth[row] = !primed
                             ? value
                             : Mathf.Lerp(smooth[row], value, 1f - Mathf.Exp(-Mathf.Max(0f, deltaTime) / modifier.seconds));
                         value = smooth[row];
                         break;
                     case HoFaceModifierKind.Steps:
-                        value = Step(row, modifier, value, now, stepRows, stepUntilRows);
+                        value = Step(row, modifier, value, now, stepRows, stepUntil);
+                        break;
+                    case HoFaceModifierKind.Delay:
+                        value = Delay(row, modifier, value, now, delay);
                         break;
                     default:
-                        break;   // 延迟：数据留位，未实现
+                        break;
                 }
             }
 
             return value;
         }
 
+        private float ApplyModifiers(int row, HoFaceOutput output, float value, float deltaTime, double now) =>
+            ApplyModifiers(row, output, value, deltaTime, now, outputSmooth, stepIndex, stepUntil, outputDelay);
+
         /// <summary>
-        /// 分档：参数过 <c>trigger</c> 就跳到 <c>target</c>，往下掉超过 <c>threshold</c> 才退回去，
+        /// 延迟：一个**每行一条的 FIFO**，进去的值等 <c>seconds</c> 秒之后再出来。
+        ///
+        /// 单位是**秒**（与平滑一致）。VBridger 那份是"帧数"、由它用 `round(delay*0.06)` 从毫秒折出来，
+        /// 与帧率绑定；我们统一走秒，换机器手感不变。
+        ///
+        /// 几个刻意的决定：
+        /// * **不推入 NaN / 无穷** —— 放进去会让整条队列的值都变成 NaN，而且是永久性的。
+        /// * **首帧先垫**：队列为空时直接返回 <paramref name="value"/>，不先垫一个 0，
+        ///   否则会话一开始会从 0 爬上来（跟平滑那边 `primed` 的道理一样）。
+        /// * **队列超时上限**：读数时间戳有抖动时，防止一条永远取不出来的队列无限长大。
+        /// </summary>
+        private float Delay(int row, HoFaceModifier modifier, float value, double now,
+            Queue<(double At, float Value)>[] delay)
+        {
+            float seconds = Mathf.Max(0.0001f, modifier.seconds);
+            Queue<(double At, float Value)> queue = delay[row];
+            if (queue == null)
+            {
+                queue = new Queue<(double At, float Value)>();
+                delay[row] = queue;
+            }
+
+            if (!float.IsNaN(value) && !float.IsInfinity(value))
+            {
+                queue.Enqueue((now + seconds, value));
+            }
+
+            float result = queue.Count > 0 ? queue.Peek().Value : value;
+            while (queue.Count > 0 && (queue.Peek().At <= now || queue.Count > 512))
+            {
+                result = queue.Dequeue().Value;
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// 维持：参数过 <c>trigger</c> 就跳到 <c>target</c>，往下掉超过 <c>threshold</c> 才退回去，
         /// 触发后至少保持 <c>hold</c> 秒。没触发任何档时输出 0（等于隐含的"最小档"）。
         /// </summary>
-        private float Step(int row, HoFaceModifier modifier, float value, double now, int[] stepRows, double[] stepUntilRows)
+        private float Step(int row, HoFaceModifier modifier, float value, double now, int[] stepRows, double[] stepUntil)
         {
             var steps = modifier.steps;
             if (steps == null || steps.Count == 0) return value;
@@ -319,18 +401,18 @@ namespace HoFaceTracking.Core
             int current = stepRows[row];
             if (current >= 0 && current < steps.Count && steps[current] != null)
             {
-                if (now < stepUntilRows[row]) next = current;                       // 最短保持
+                if (now < stepUntil[row]) next = current;                       // 最短保持
                 else
                 {
                     float release = steps[current].trigger - Mathf.Abs(steps[current].threshold);
-                    if (value >= release && next < current) next = current;         // 迟滞：没掉够就不退
+                    if (value >= release && next < current) next = current;      // 迟滞：没掉够就不退
                 }
             }
 
             if (next != current)
             {
                 stepRows[row] = next;
-                stepUntilRows[row] = next >= 0 && steps[next] != null ? now + Mathf.Max(0f, steps[next].hold) : 0.0;
+                stepUntil[row] = next >= 0 && steps[next] != null ? now + Mathf.Max(0f, steps[next].hold) : 0.0;
             }
 
             return next >= 0 && steps[next] != null ? steps[next].target : 0f;
