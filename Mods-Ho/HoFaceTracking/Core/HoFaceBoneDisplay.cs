@@ -28,11 +28,22 @@ namespace HoFaceTracking.Core
         float axisLength, pixelWidth;
         Color boneColor;
         bool subscribed;
+        int skippedNonFinite, skippedNearPlane, skippedDegenerate;
+        bool warnedInvalidBuffers;
 
         public int NodeCount => nodes.Count;
         public int BoneCount { get; private set; }
         public int SegmentCount { get; private set; }
         public Mesh Geometry => mesh;
+
+        /// <summary>本帧被跳过的线段数（非有限值 / 全在相机平面之后 / 退化）。</summary>
+        public int SkippedSegments => skippedNonFinite + skippedNearPlane + skippedDegenerate;
+
+        /// <summary>因缓冲不自洽而丢弃绘制的帧数（正常恒为 0；不为 0 说明出 bug 了）。</summary>
+        public int DroppedFrames { get; private set; }
+
+        /// <summary>最近一帧的几何摘要，排查"凭空多出乱三角形"时看这个。</summary>
+        public string LastGeometrySummary { get; private set; } = "(未构建)";
 
         public void Update(GameObject target, bool axes, float length, float width, Color color)
         {
@@ -108,6 +119,7 @@ namespace HoFaceTracking.Core
         public void BuildGeometry(Camera camera)
         {
             vertices.Clear(); colors.Clear(); indices.Clear(); SegmentCount = 0;
+            skippedNonFinite = skippedNearPlane = skippedDegenerate = 0;
             if (mesh == null) return;
             mesh.Clear(false);
             if (camera == null || character == null || !character.activeInHierarchy) return;
@@ -122,20 +134,54 @@ namespace HoFaceTracking.Core
                 AddSegment(camera, origin, origin + node.up * axisLength, Y);
                 AddSegment(camera, origin, origin + node.forward * axisLength, Z);
             }
+
+            LastGeometrySummary = "verts=" + vertices.Count + " indices=" + indices.Count
+                + " segments=" + SegmentCount + " skipped=" + skippedNonFinite + "/"
+                + skippedNearPlane + "/" + skippedDegenerate;
+
             if (vertices.Count == 0) return;
+
+            // 缓冲自检：不自洽就当帧不画。画出来比不画危害大得多 ——
+            // 索引一旦指到别的线段上，顶点色会在红绿蓝之间插值，看起来正好是一个紫色大三角形。
+            if (!ValidateBuffers())
+            {
+                mesh.Clear(false);
+                DroppedFrames++;
+                if (!warnedInvalidBuffers)
+                {
+                    warnedInvalidBuffers = true;
+                    Debug.LogError("[Ho 面捕] 骨骼网格缓冲自检失败，已停止绘制：" + LastGeometrySummary);
+                }
+                return;
+            }
+            warnedInvalidBuffers = false;
+
             mesh.SetVertices(vertices);
             mesh.SetColors(colors);
             mesh.SetIndices(indices, MeshTopology.Triangles, 0, false);
             mesh.RecalculateBounds();
+            LastGeometrySummary += " bounds=" + mesh.bounds.size.ToString("F3");
+        }
+
+        /// <summary>顶点/颜色数量一致、索引数为 3 的倍数且全部在范围内。</summary>
+        bool ValidateBuffers()
+        {
+            if (vertices.Count != colors.Count || indices.Count % 3 != 0) return false;
+            for (int i = 0; i < indices.Count; i++)
+            {
+                int index = indices[i];
+                if (index < 0 || index >= vertices.Count) return false;
+            }
+            return true;
         }
 
         void AddSegment(Camera camera, Vector3 start, Vector3 end, Color color)
         {
-            if ((end - start).sqrMagnitude < 1e-12f) return;
+            if ((end - start).sqrMagnitude < 1e-12f) { skippedDegenerate++; return; }
             Vector3 a = camera.WorldToScreenPoint(start), b = camera.WorldToScreenPoint(end);
-            if (!Finite(a) || !Finite(b)) return;
+            if (!Finite(a) || !Finite(b)) { skippedNonFinite++; return; }
             float near = camera.nearClipPlane + .0001f;
-            if (a.z < near && b.z < near) return;
+            if (a.z < near && b.z < near) { skippedNearPlane++; return; }
             // Clip before projecting the quad. A segment crossing behind the camera must not
             // flip across the view or grow into a huge ribbon.
             if (a.z < near)
@@ -149,7 +195,7 @@ namespace HoFaceTracking.Core
                 b = camera.WorldToScreenPoint(end);
             }
             Vector2 direction = new Vector2(b.x - a.x, b.y - a.y);
-            if (direction.sqrMagnitude < 1e-8f) return;
+            if (direction.sqrMagnitude < 1e-8f) { skippedDegenerate++; return; }
             Vector2 side = new Vector2(-direction.y, direction.x).normalized * (pixelWidth * .5f);
             int first = vertices.Count;
             AddVertex(camera.ScreenToWorldPoint(a + new Vector3(side.x, side.y, 0)), color);
@@ -179,6 +225,9 @@ namespace HoFaceTracking.Core
             mesh = null; material = null; character = null;
             nodes.Clear(); nodeSet.Clear(); vertices.Clear(); colors.Clear(); indices.Clear();
             BoneCount = SegmentCount = 0;
+            skippedNonFinite = skippedNearPlane = skippedDegenerate = 0;
+            warnedInvalidBuffers = false;
+            LastGeometrySummary = "(未构建)";
         }
 
         static void DestroyOwned(UnityEngine.Object value)

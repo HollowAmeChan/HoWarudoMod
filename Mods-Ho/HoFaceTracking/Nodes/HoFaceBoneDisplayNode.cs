@@ -53,6 +53,10 @@ namespace HoFaceTracking.Nodes
             display.Update(Character.GameObject, DrawAxes, AxisLength, LineWidth, BoneColor);
             status = "节点 " + display.NodeCount + " 个 · 骨链 " + display.BoneCount
                 + " 条（完整子层级，含辅助与末端节点；无集合过滤）";
+            if (display.SkippedSegments > 0)
+                status += " · 本帧跳过 " + display.SkippedSegments + " 段";
+            if (display.DroppedFrames > 0)
+                status += " · ⚠ 已丢弃 " + display.DroppedFrames + " 帧（缓冲自检失败，详情见日志）";
             return null;
         }
 
