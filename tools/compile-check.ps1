@@ -62,6 +62,8 @@ $referenceNames = @(
     # (Warudo itself has none; see HoDebugLogNode's header). Re-added 2026-09-25
     # for the "copy" button, after having been dropped with the old clipboard button.
     'UnityEngine.IMGUIModule.dll',
+    # World-space blend-shape monitor: TextMesh, Font, CharacterInfo.
+    'UnityEngine.TextRenderingModule.dll',
     'UniTask.dll',
     'Warudo.Core.dll',
     'Warudo.Plugins.Core.dll',

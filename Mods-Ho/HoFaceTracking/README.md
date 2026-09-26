@@ -9,7 +9,7 @@
   `IsTracked` / `BlendShapes` / `HeadPosition` / `RootPosition` / `BoneRotations`。角色不在这边 ——
   挂到角色上由**官方那三个应用节点**在图上选
   （设置角色面部追踪 BlendShape 列表 / 覆盖角色骨骼旋转偏移列表 / 覆盖角色根位置），
-  所以本 Mod 一个角色引用都没有。
+  控制求解本身不持有角色引用。另有真值显示节点直接读取角色资源。
 
 > **文档状态：2026-09-25 按源码逐条核对。** 分三段：**现状** → **目标形态** → **待清理 / 未实测**。
 > * `Core/` 里哪些文件是从 HoUnityTools 包搬来的、怎么重新同步 → [`Core/PORTED.md`](Core/PORTED.md)
@@ -25,10 +25,73 @@
 |---|---|
 | `[PluginType] Id` | `hollow.hofacetracking`（也是沙箱目录名） |
 | Name / Version | `Ho Face Tracking` / `0.2.0` |
-| NodeTypes | **10 个**（见 §1.1；**漏列的节点不会出现在面板里**） |
+| NodeTypes | **12 个**（见 §1.1；**漏列的节点不会出现在面板里**） |
 | 命名空间 | `HoFaceTracking.PluginMod`（**不要**叫 `...Plugin`：会遮蔽 `Plugin` 基类，CS0118，见 `HoFaceTrackingPlugin.cs:20-21`） |
 
-### 1.1 节点（10 个，一个 Mod 全包了）
+### 形态键真值显示（2026-09-27）
+
+在 **Ho Face Tracking → HoFace形态键真值** 选角色资源并打开「显示」，文字放在角色旁边，面向主相机。
+节点读取实际 `SkinnedMeshRenderer.GetBlendShapeWeight()`，不读取面捕参数、Hub 或影子控制器；
+角色不必事先挂调试组件。零值也显示，权重保留 Unity 原始量纲（通常 0–100，也保留负值和超出 100 的值）。
+
+| 输入 | 默认值 | 用途 |
+|---|---|---|
+| 角色 | 未选 | Warudo `CharacterAsset` 资源，自动收集子层级全部蒙皮网格，包含禁用的网格 |
+| 显示 | 开 | 关闭立即释放节点创建的文字对象 |
+| 每列行数 | 24 | 填满后向右排新列 |
+| 行距 | 1 | 行高倍数 |
+| 列距 | 1.5 | 列之间的空隙，随整体缩放变化 |
+| 位置偏移 | (0.6, 1.8, 0) | 相对角色根坐标的位置 |
+| 整体缩放 | 0.035 | 文字的世界尺寸 |
+
+**汇总约定（用户指定）**：不分物体、不加物体名前缀。同名键只显示一行，取各网格实际权重的
+**数值最大值**（不是绝对值最大、也不相加）。同名键只要有值不相等，**键名标黄**，值恢复一致后
+恢复白色。显示两位小数；冲突判断使用未四舍五入的实际值，微小差异也会标黄。
+
+节点提供一个「状态」输出，报告唯一键数和冲突键数。无需把输出接到别处才运行。
+插件在场景 LateUpdate 后驱动隐藏流程入口，让 Warudo 自己求值上游连接，因此显示开关和布局输入
+可以接线控制。蓝图停用、角色卸载／切换、节点删除、插件热重载都会清理旧显示，不修改角色网格或权重。
+
+验证：`tools/compile-check.ps1 -ModsRoots Mods-Ho`（真实 Warudo DLL 编译与 UMod lint）；
+`Tests~/RunBlendShapeDisplay.ps1 -Project <带 .ho-face-validation 标记的独立 Unity 工程>`
+（21 项行为与实际字形边界检查，并输出 `blendshape-display-preview.png`）。
+世界文字已在 Unity 中实际渲染确认；Warudo 播放器内的蓝图接线与热重载仍需新 Mod 加载后验收。
+
+### 骨骼全量显示（2026-09-27）
+
+在 **Ho Face Tracking → HoFace骨骼全量显示** 选择角色资源，打开「显示」即可。
+这是 `HoRuntimeBoneDebugRenderer` 的简化节点版：**没有集合 JSON、隐藏集合、集合颜色或过滤输入**。
+以角色根为起点，遍历完整 Transform 子层级（含根、未启用节点、辅助与末端节点），
+不限定 Humanoid 或蒙皮网格的 bones 数组；同名骨骼仍是不同节点，不按名字合并。
+
+| 输入 | 默认值 | 用途 |
+|---|---|---|
+| 角色 | 未选 | Warudo `CharacterAsset`，自动使用其根节点 |
+| 显示 | 开 | 关闭时解除绘制回调并释放临时资源 |
+| 绘制轴向 | 开 | 各节点的红 X、绿 Y、蓝 Z；骨链始终绘制 |
+| 轴向长度 | 0.04 | 世界单位，0 等同不画轴 |
+| 线宽（像素） | 2 | 各相机下保持屏幕线宽，范围 0.5–20 |
+| 骨链颜色 | 浅蓝 | 骨链颜色；三轴保持固定 RGB |
+
+每帧更新完整层级，相机绘制时读取最新世界姿态。节点不在角色内部生成调试对象，
+不修改姿态，不会把自己的几何体重复收集成骨骼。角色缩放／旋转不会被重复应用。
+
+绘制使用 Warudo 的内置渲染管线：在各游戏相机 `Camera.onPostRender` 时绘制屏幕宽度的四边形，
+关闭深度测试，骨链和轴能穿透角色显示；遵守相机对角色所在层的剔除掩码。
+按当前绘制相机生成几何体，支持透视、正交、多视图；相机近裁剪面后的线段会先裁剪。
+材质使用 Unity 内置 `Hidden/Internal-Colored`，无需额外材质或 Shader 文件输入；
+若播放器缺少该 Shader，节点状态会报告错误。此绘制路径面向 Warudo BiRP，未提供 URP/HDRP 回调。
+
+节点由插件自动驱动，连接开关／参数时由蓝图求值输入，不必连接流程线或消费状态输出。
+状态显示节点数及父子连线数。角色切换、节点删除、蓝图停用和插件卸载都会释放资源。
+
+验证：真实 Warudo DLL 编译与 UMod lint 通过；
+`Tests~/RunBoneDisplay.ps1 -Project <带 .ho-face-validation 标记的独立 Unity 工程>`
+通过 27 项测试，包含 5,501 个节点／超过 65,535 个顶点、角色变换、层级变化、像素线宽、
+近裁剪、实际相机穿透绘制和资源清理，并生成 `bone-display-preview.png`。
+Warudo 播放器内加载与蓝图接线待新 Mod 打包后验证。
+
+### 1.1 节点（12 个，一个 Mod 全包了）
 
 | 节点（代码） | 面板标题 | 状态 | 干什么 |
 |---|---|---|---|
@@ -36,6 +99,8 @@
 | `Nodes/HoFaceParameterNode.cs` | HoFace参数处理 | **正式** | 读 `*.hoface.json`：裸线名 → 规范参数（+ `有脸` 判定）。**只交一份字典**，不装配（**3 个输出口**） |
 | `Nodes/HoFaceSolverNode.cs` | HoFace控制求解 | **正式** | **从参数反求动画输出**（零配置）：官方同形的 5 个口 + 一个 `状态`（**6 个输出口**；`动态参数` 那个口 2026-09-26 删了 —— 动态参数现在由中间层直接写角色 Hub） |
 | `Nodes/HoFaceHubWriteNode.cs` | HoFace写动态参数 | **正式** | 把**中间层那份参数**（参数处理的 `参数` / 「HoStringFloatMerge」的 `字典`）写进**角色身上**的 `HoFaceSemanticHub`（**只有一个组件**：直接找它；名字按名字走，**没有表**）（2 个输出口：`写入数` / `状态`） |
+| `Nodes/HoFaceBlendShapeDisplayNode.cs` | HoFace形态键真值 | 编译／Unity 绘制验证通过，待 Warudo 加载验证 | 角色所有网格汇总为世界空间文字，同名取最大值，值不同标黄；自动运行，不用接流程线 |
+| `Nodes/HoFaceBoneDisplayNode.cs` | HoFace骨骼全量显示 | 编译／Unity 绘制验证通过，待 Warudo 加载验证 | 自动遍历角色完整子层级，透视绘制骨链及 XYZ 轴，不需要集合 JSON |
 | `Nodes/HoDebugLogNode.cs` | Ho调试日志 | **正式（通用件，跟面捕无关）** | 一个入口 + 一块只读显示 + 一个「复制」按钮（`[Trigger]`，**没有任何输出口**） |
 | `Nodes/HoStringFloatDictNode.cs` | HoStringFloatDict | **正式（通用件）** | **面板手填若干 `(名字, 值)` 行 → 直接创建一份字典**（行是官方的 `StructuredData`，不是键值对）。图里没有"手填字典"这回事（`Dictionary<string,float>` 是 `Reference` 类口，官方从来不手填），所以"手填一张表"只能做成节点（`字典` / `状态`） |
 | `Nodes/HoStringFloatNode.cs` | HoStringFloat | **正式（通用件）** | **一个 `(名字, 值)` → `KeyValuePair<string,float>` 键值对**（`键值对` / `状态`）—— "把值拼成一个键值对"那一步 |
@@ -61,6 +126,8 @@
 **参数处理 `a41d0c86-6f52-4b19-8d3a-5e2c71b904af`**、
 **控制求解 `7c3a91d6-4f2b-48e7-9a15-63d8f0b2c47e`（沿用旧「处理链」那个）**、
 写动态参数 `c47b1e05-8a92-4f6d-b3c1-7e5a9d20f68b`、
+形态键真值 `f4b5af55-3161-4a65-b6e0-f9d8975d1f12`、
+骨骼全量显示 `8cc5509a-e3a4-4fca-990d-e8507ba0a146`、
 调试日志 `e2a47f83-5d19-4c6b-a07e-91b3c58d4f26`、
 
 **HoStringFloatDict `3e9abc40-8c60-4238-880a-c4a4febee63a`**、
@@ -68,7 +135,7 @@
 **HoStringFloat `39edc904-0493-4dd3-9d73-521aa66e0e50`**、
 **HoStringFloatAppend `2ba50601-566f-490e-934a-664165e1777f`**、
 **HoBool2Float `25c639c7-6b33-4e90-bb6a-4aa811613aba`**。
-分类：**10 个节点全在 `Ho Face Tracking` 一个分类下**（2026-09-27 用户定：通用件也归到这一堆里，不再单开 `Ho General`）。
+分类：**12 个节点全在 `Ho Face Tracking` 一个分类下**（2026-09-27 用户定：通用件也归到这一堆里，不再单开 `Ho General`）。
 
 ⚠️ **Id 的这段安排是有意的**：老「处理链」的 Id 给了**控制求解** —— 于是升级之后，
 指官方三个应用节点的那 **5 根线原样保住**；参数处理是新 Id，需要重接的只有接收器过来那几根

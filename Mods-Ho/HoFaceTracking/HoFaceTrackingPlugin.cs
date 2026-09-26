@@ -10,7 +10,7 @@
 //      IsTracked / BlendShapes / HeadPosition / RootPosition / BoneRotations。
 //      角色不在这边 —— 挂到角色上由官方节点在图上选
 //      （`Set Character Tracking BlendShapes` / `Override Character Bone Rotation Offsets` /
-//      `Override Character Root Position`），所以本 Mod 一个角色引用都没有。
+//      `Override Character Root Position`）。另有形态键真值与骨骼显示节点直接读取所选角色资源。
 // （②③ 是 2026-09-25 从原来的「Ho Face 处理链」拆出来的：这样别的来源 —— 比如 VB 走 VTS 服务端模式 ——
 //   可以**跳过参数处理**直接喂控制求解。）
 //
@@ -46,6 +46,8 @@ namespace HoFaceTracking.PluginMod
             typeof(HoFaceParameterNode),
             typeof(HoFaceSolverNode),
             typeof(HoFaceHubWriteNode),
+            typeof(HoFaceBlendShapeDisplayNode),
+            typeof(HoFaceBoneDisplayNode),
             typeof(HoDebugLogNode),
             // 通用节点（不是面捕专用，只是暂时放在这个 mod 里）—— 一组"名字 → 浮点"的表工具，
             // 前缀一致、面板里排在一起（家族说明见 Nodes/HoStringFloatNode.cs 的文件头）：
@@ -84,6 +86,14 @@ namespace HoFaceTracking.PluginMod
                 Debug.Log("[Ho 面捕] 插件的沙箱还没就绪，参数处理节点会在第一帧再试一次。");
         }
 
+        /// <summary>场景 LateUpdate 完成后更新真值与骨骼显示，也负责清理已停用蓝图的显示。</summary>
+        public override void OnPostLateUpdate()
+        {
+            base.OnPostLateUpdate();
+            HoFaceBlendShapeDisplayNode.UpdateAll();
+            HoFaceBoneDisplayNode.UpdateAll();
+        }
+
         /// <summary>
         /// 插件被卸载（含热更新换程序集）时把 UDP socket 关掉。
         ///
@@ -94,6 +104,8 @@ namespace HoFaceTracking.PluginMod
         /// </summary>
         protected override void OnDestroy()
         {
+            HoFaceBlendShapeDisplayNode.ClearAll();
+            HoFaceBoneDisplayNode.ClearAll();
             HoFaceInputState.Stop();
             Debug.Log("[Ho 面捕] 插件被卸载：接收器已关（下次点 Connect 会重新绑端口）。");
             base.OnDestroy();
