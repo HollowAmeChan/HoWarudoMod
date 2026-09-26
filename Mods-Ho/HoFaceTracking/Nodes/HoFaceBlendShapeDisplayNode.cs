@@ -39,10 +39,10 @@ namespace HoFaceTracking.Nodes
         public Vector3 ExtraRotation = Vector3.zero;
 
         [DataInput(8), Label("列反向展开"),
-         Description("让列朝另一侧铺开，**不动朝向**。" +
-                     "面板「长在角色的哪一边」用这个调 —— 负责文字正反面的那个 180° 旋转" +
-                     "会同时把列的铺开方向翻过去，用旋转调会把文字也翻掉。")]
-        public bool ReverseColumns;
+         Description("让列朝另一侧铺开，**不动朝向**。面板「长在角色的哪一边」用这个调 —— " +
+                     "负责文字正反面的那个 180° 旋转会同时把列的铺开方向翻过去，用旋转调会把文字也翻掉。" +
+                     "已实测默认 true 时位置正确。")]
+        public bool ReverseColumns = true;
 
         static readonly List<HoFaceBlendShapeDisplayNode> instances = new List<HoFaceBlendShapeDisplayNode>();
         readonly HoFaceBlendShapeDisplay display = new HoFaceBlendShapeDisplay();

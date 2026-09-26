@@ -60,7 +60,7 @@ namespace HoFaceTracking.Core
         public GameObject DisplayObject => root;
 
         public void Update(GameObject character, int rows, float rowSpacing, float columnSpacing,
-            Vector3 offset, float scale, Vector3 extraEuler = default(Vector3), bool reverseColumns = false)
+            Vector3 offset, float scale, Vector3 extraEuler = default(Vector3), bool reverseColumns = true)
         {
             if (character == null || !character.activeInHierarchy) { Dispose(); return; }
             if (owner != character) { Dispose(); owner = character; }
