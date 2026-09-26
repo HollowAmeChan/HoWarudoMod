@@ -33,8 +33,9 @@ namespace HoFaceTracking.Nodes
         public float Scale = .035f;
 
         [DataInput(7), Label("附加旋转"),
-         Description("在「自动面向主相机」之后叠加，作用在面板自己的局部轴上。" +
-                     "Z 填 180 = 面板绕自身正前方向自转半圈（文字会上下颠倒，但不会变镜像）。" +
+         Description("在「自动面向主相机」之后叠加，作用在面板自己的局部轴上。默认 (0,0,0) 即正确 —— " +
+                     "朝向由自动面向相机单独决定，不需要再补 180。" +
+                     "Z 填 180 = 面板绕自身正前方向自转半圈（文字上下颠倒，但不会变镜像）。" +
                      "⚠️ 旋转修不了镜像，真正左右镜像要用负缩放。")]
         public Vector3 ExtraRotation = Vector3.zero;
 

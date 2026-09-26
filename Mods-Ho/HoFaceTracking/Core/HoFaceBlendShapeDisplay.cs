@@ -130,9 +130,15 @@ namespace HoFaceTracking.Core
             root.transform.localScale = Vector3.one * scale;
             var camera = Camera.main;
             Vector3 direction = camera != null ? camera.transform.position - root.transform.position : -character.transform.forward;
+            // 朝向只由 LookRotation 决定（文字正对相机）。
+            //
+            // 这里曾经硬编码再乘一个 Quaternion.Euler(0, 180, 0)，结果是：为了把面板摆正，
+            // 必须在「附加旋转」里再填一个 180 把它抵消掉（180 × 180 = 360 = 原样）。
+            // 两个 180 互相抵消、等于没写，只会让人以为"还得再填 180 才对"。已删除。
+            //
+            // 需要翻转时用「附加旋转」，默认 (0,0,0) 就是实测正确的那一组。
             if (direction.sqrMagnitude > .000001f)
                 root.transform.rotation = Quaternion.LookRotation(direction, camera != null ? camera.transform.up : Vector3.up)
-                    * Quaternion.Euler(0, 180, 0)
                     * Quaternion.Euler(extraEuler);
         }
 
